@@ -88,6 +88,7 @@ MAX_UPSCALE_PIXELS = 120_000_000
 CLEANUP_INTERVAL_SECONDS = 60
 _last_cleanup_at = 0
 FONT_DIR = Path(os.environ.get("WINDIR", "C:\\Windows")) / "Fonts"
+RUNTIME_COOKIES_FILE = Path(os.environ.get("TMPDIR", BASE_DIR)) / "youtube_cookies.txt"
 
 app = Flask(__name__, static_folder=str(FRONTEND_DIR), static_url_path="")
 app.config["MAX_CONTENT_LENGTH"] = MAX_CONTENT_LENGTH
@@ -222,6 +223,14 @@ def ytdlp_base_opts():
     cookies_file = os.environ.get("YOUTUBE_COOKIES_FILE")
     if cookies_file and Path(cookies_file).exists():
         opts["cookiefile"] = cookies_file
+    else:
+        cookies_text = os.environ.get("YOUTUBE_COOKIES_TEXT", "").strip()
+        if cookies_text:
+            try:
+                RUNTIME_COOKIES_FILE.write_text(cookies_text.replace("\\n", "\n") + "\n", encoding="utf-8")
+                opts["cookiefile"] = str(RUNTIME_COOKIES_FILE)
+            except OSError:
+                pass
     return opts
 
 
