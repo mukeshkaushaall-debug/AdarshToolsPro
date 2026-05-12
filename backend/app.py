@@ -12,7 +12,7 @@ import io
 import zipfile
 from html import unescape
 from pathlib import Path
-from urllib.parse import unquote, urlparse
+from urllib.parse import parse_qs, unquote, urlparse
 
 import requests
 import certifi
@@ -184,6 +184,8 @@ def cleanup_temp_storage():
 def simplify_download_error(message):
     msg = re.sub(r"\s+", " ", message or "").strip()
     lowered = msg.lower()
+    if "confirm you" in lowered and "bot" in lowered:
+        return "YouTube is blocking this server as automated traffic. Redeploy with latest yt-dlp, or set YOUTUBE_COOKIES_FILE on the server."
     if "sign in to confirm" in lowered or "login" in lowered or "private" in lowered:
         return "This video needs login or is private. Try a public link."
     if "certificate_verify_failed" in lowered or "certificate verify failed" in lowered or "ssl" in lowered:
@@ -200,7 +202,7 @@ def simplify_download_error(message):
 
 
 def ytdlp_base_opts():
-    return {
+    opts = {
         "quiet": True,
         "no_warnings": True,
         "noprogress": True,
@@ -211,8 +213,16 @@ def ytdlp_base_opts():
         "fragment_retries": 3,
         "socket_timeout": 30,
         "nocheckcertificate": True,
-        "extractor_args": {"youtube": {"player_client": ["android", "web"]}},
+        "http_headers": {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36",
+            "Accept-Language": "en-US,en;q=0.9,hi;q=0.8",
+        },
+        "extractor_args": {"youtube": {"player_client": ["android", "ios", "web"]}},
     }
+    cookies_file = os.environ.get("YOUTUBE_COOKIES_FILE")
+    if cookies_file and Path(cookies_file).exists():
+        opts["cookiefile"] = cookies_file
+    return opts
 
 
 def extract_info_safe(url, download=False, extra_opts=None):
@@ -301,6 +311,24 @@ def clean_url(value):
     return value
 
 
+def extract_youtube_video_id(value):
+    parsed = urlparse(value)
+    host = parsed.netloc.lower().replace("www.", "").replace("m.", "")
+    if host == "youtu.be":
+        video_id = parsed.path.strip("/").split("/")[0]
+        return video_id if re.fullmatch(r"[\w-]{11}", video_id or "") else None
+    if "youtube.com" not in host:
+        return None
+    query_id = parse_qs(parsed.query).get("v", [""])[0]
+    if re.fullmatch(r"[\w-]{11}", query_id or ""):
+        return query_id
+    for marker in ("/shorts/", "/embed/", "/live/"):
+        if marker in parsed.path:
+            video_id = parsed.path.split(marker, 1)[1].split("/", 1)[0]
+            return video_id if re.fullmatch(r"[\w-]{11}", video_id or "") else None
+    return None
+
+
 def safe_file_from_upload(file_storage, kind="image"):
     if not file_storage or not file_storage.filename:
         raise ApiError("Please upload a file.")
@@ -323,6 +351,7 @@ def image_response(path, label="Download image"):
         "success": True,
         "filename": path.name,
         "download_url": public_download_url(path.name),
+        "preview_url": public_download_url(path.name),
         "download_label": label,
     }
 
@@ -1054,8 +1083,14 @@ def youtube_thumbnail():
     cleanup_temp_storage()
     data = request.get_json(silent=True) or request.form
     url = clean_url(data.get("url"))
-    info, _ = extract_info_safe(url, download=False, extra_opts={"skip_download": True})
-    video_id = info.get("id")
+    info = {}
+    video_id = extract_youtube_video_id(url)
+    try:
+        info, _ = extract_info_safe(url, download=False, extra_opts={"skip_download": True})
+        video_id = info.get("id") or video_id
+    except ApiError:
+        if not video_id:
+            raise
     title = secure_filename(info.get("title") or "youtube_thumbnail")
     candidates = [
         f"https://img.youtube.com/vi/{video_id}/maxresdefault.jpg",
