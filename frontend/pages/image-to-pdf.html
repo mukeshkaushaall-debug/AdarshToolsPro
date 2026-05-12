@@ -1,0 +1,20 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Image To PDF - ThugTools</title>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@500;650;750;850;900&display=swap" rel="stylesheet"><link rel="stylesheet" href="../style.css">
+</head>
+<body>
+  <div class="rgb-line"></div><nav class="nav"><div class="container nav-inner"><a class="brand" href="../index.html"><div class="brand-mark">T</div><span>ThugTools</span></a><div class="nav-links"><a href="../index.html#tools">Tools</a><a class="active" href="#">Image PDF</a></div><div class="nav-actions"><button class="icon-btn" data-theme aria-label="Toggle theme"><span data-icon="sun"></span></button><button class="menu-btn" aria-label="Open menu"><span data-icon="menu"></span></button></div></div></nav>
+  <main class="tool-shell"><div class="container tool-panel reveal">
+    <section class="tool-intro"><span class="eyebrow">JPG PNG WEBP to PDF</span><h1>Image To PDF</h1><p class="lead">Upload one or many images and convert them into a single print-ready PDF file.</p></section>
+    <form class="form-stack" data-upload-form data-endpoint="/api/pdf/image-to-pdf">
+      <label class="upload-zone"><input type="file" name="files" accept="image/*" multiple required><div><div data-icon="upload"></div><h3>Drop images here</h3><p data-file-name>or tap to browse</p></div></label>
+      <select name="page_size"><option value="auto">Auto image size</option><option value="a4">A4 page with margins</option></select>
+      <button class="btn" type="submit">Create PDF</button><div class="progress-wrap"><div class="progress-bar"></div></div><div class="preview-grid"><div class="preview-card"><span>First image</span><div data-before></div></div><div class="preview-card"><span>PDF output</span><div data-after></div></div></div><div class="result-box" data-result></div>
+    </form>
+  </div></main>
+  <footer class="footer"><div class="container footer-inner"><span>ThugTools</span><span>Images are converted locally on the server and cleaned automatically.</span></div></footer><div class="toast"></div><div class="spinner"><div class="loader"></div></div><script src="../script.js?v=20260512-invoice-modern-hide"></script>
+</body>
+</html>

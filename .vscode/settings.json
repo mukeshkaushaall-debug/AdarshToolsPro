@@ -1,0 +1,7 @@
+{
+  "python.analysis.extraPaths": [
+    "./backend",
+    "./backend/vendor"
+  ],
+  "python.defaultInterpreterPath": "python"
+}

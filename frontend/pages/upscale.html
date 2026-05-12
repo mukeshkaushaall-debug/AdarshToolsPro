@@ -1,0 +1,22 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Image Upscale - ThugTools</title>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@500;650;750;850;900&display=swap" rel="stylesheet"><link rel="stylesheet" href="../style.css">
+</head>
+<body>
+  <div class="rgb-line"></div><nav class="nav"><div class="container nav-inner"><a class="brand" href="../index.html"><div class="brand-mark">T</div><span>ThugTools</span></a><div class="nav-links"><a href="../index.html#tools">Tools</a><a class="active" href="#">Upscale</a></div><div class="nav-actions"><button class="icon-btn" data-theme aria-label="Toggle theme"><span data-icon="sun"></span></button><button class="menu-btn" aria-label="Open menu"><span data-icon="menu"></span></button></div></div></nav>
+  <main class="tool-shell"><div class="container tool-panel reveal">
+    <section class="tool-intro"><span class="eyebrow">AI detail upscale</span><h1>Image Upscale</h1><p class="lead">Increase real pixel dimensions and add visible detail sharpening for cleaner social, print, and product images.</p></section>
+    <form class="form-stack" data-upload-form data-endpoint="/api/image/upscale">
+      <label class="upload-zone"><input type="file" name="file" accept="image/*" required><div><div data-icon="upload"></div><h3>Drop image here</h3><p data-file-name>or tap to browse</p></div></label>
+      <select name="scale"><option value="2">2x upscale</option><option value="3">3x upscale</option><option value="4">4x upscale</option></select>
+      <select name="mode"><option value="photo">Photo clean</option><option value="crisp">Ultra crisp</option><option value="fast">Fast sharp</option></select>
+      <label>Detail boost <input type="range" name="detail" min="30" max="100" value="72"></label>
+      <button class="btn" type="submit">Upscale image</button><div class="progress-wrap"><div class="progress-bar"></div></div><div class="preview-grid"><div class="preview-card"><span>Before</span><div data-before></div></div><div class="preview-card"><span>After</span><div data-after></div></div></div><div class="result-box" data-result></div>
+    </form>
+  </div></main>
+  <footer class="footer"><div class="container footer-inner"><span>ThugTools</span><span>Download to inspect the larger real pixel output.</span></div></footer><div class="toast"></div><div class="spinner"><div class="loader"></div></div><script src="../script.js?v=20260511-advanced-image"></script>
+</body>
+</html>

@@ -1,0 +1,21 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>AI Image Enhancer - ThugTools</title>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@500;650;750;850;900&display=swap" rel="stylesheet"><link rel="stylesheet" href="../style.css">
+</head>
+<body>
+  <div class="rgb-line"></div><nav class="nav"><div class="container nav-inner"><a class="brand" href="../index.html"><div class="brand-mark">T</div><span>ThugTools</span></a><div class="nav-links"><a href="../index.html#tools">Tools</a><a class="active" href="#">Enhancer</a></div><div class="nav-actions"><button class="icon-btn" data-theme aria-label="Toggle theme"><span data-icon="sun"></span></button><button class="menu-btn" aria-label="Open menu"><span data-icon="menu"></span></button></div></div></nav>
+  <main class="tool-shell"><div class="container tool-panel reveal">
+    <section class="tool-intro"><span class="eyebrow">Premium image AI</span><h1>AI Image Enhancer</h1><p class="lead">Improve dull photos with smart contrast, color, brightness, denoise, and crisp detail enhancement.</p></section>
+    <form class="form-stack" data-upload-form data-endpoint="/api/image/enhance">
+      <label class="upload-zone"><input type="file" name="file" accept="image/*" required><div><div data-icon="upload"></div><h3>Drop image here</h3><p data-file-name>or tap to browse</p></div></label>
+      <select name="mode"><option value="auto">Auto premium</option><option value="hdr">HDR pop</option><option value="portrait">Portrait glow</option><option value="product">Product clarity</option><option value="lowlight">Low light fix</option><option value="sharp">Extra sharp</option></select>
+      <label>Strength <input type="range" name="strength" min="20" max="100" value="82"></label>
+      <button class="btn" type="submit">Enhance image</button><div class="progress-wrap"><div class="progress-bar"></div></div><div class="preview-grid"><div class="preview-card"><span>Before</span><div data-before></div></div><div class="preview-card"><span>After</span><div data-after></div></div></div><div class="result-box" data-result></div>
+    </form>
+  </div></main>
+  <footer class="footer"><div class="container footer-inner"><span>ThugTools</span><span>Visible color, clarity, and sharpness enhancement.</span></div></footer><div class="toast"></div><div class="spinner"><div class="loader"></div></div><script src="../script.js?v=20260511-advanced-image"></script>
+</body>
+</html>

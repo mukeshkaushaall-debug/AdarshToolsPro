@@ -1,0 +1,22 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Image Compress - ThugTools</title>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@500;650;750;850;900&display=swap" rel="stylesheet"><link rel="stylesheet" href="../style.css">
+</head>
+<body>
+  <div class="rgb-line"></div><nav class="nav"><div class="container nav-inner"><a class="brand" href="../index.html"><div class="brand-mark">T</div><span>ThugTools</span></a><div class="nav-links"><a href="../index.html#tools">Tools</a><a class="active" href="#">Compress</a></div><div class="nav-actions"><button class="icon-btn" data-theme aria-label="Toggle theme"><span data-icon="sun"></span></button><button class="menu-btn" aria-label="Open menu"><span data-icon="menu"></span></button></div></div></nav>
+  <main class="tool-shell"><div class="container tool-panel reveal">
+    <section class="tool-intro"><span class="eyebrow">Advanced compression</span><h1>Image Compress</h1><p class="lead">Control quality, format, and resize level to compress lightly or aggressively as much as you need.</p></section>
+    <form class="form-stack" data-upload-form data-endpoint="/api/image/compress">
+      <label class="upload-zone"><input type="file" name="file" accept="image/*" required><div><div data-icon="upload"></div><h3>Drop image here</h3><p data-file-name>or tap to browse</p></div></label>
+      <select name="format"><option value="jpg">JPG smallest</option><option value="webp">WEBP modern</option></select>
+      <select name="max_side"><option value="0">Keep original size</option><option value="2000">Resize max 2000px</option><option value="1400">Resize max 1400px</option><option value="900">Resize max 900px</option><option value="600">Resize max 600px</option><option value="360">Resize max 360px</option></select>
+      <label>Quality <input type="range" name="quality" min="1" max="95" value="55"></label>
+      <button class="btn" type="submit">Compress image</button><div class="progress-wrap"><div class="progress-bar"></div></div><div class="preview-grid"><div class="preview-card"><span>Before</span><div data-before></div></div><div class="preview-card"><span>After</span><div data-after></div></div></div><div class="result-box" data-result></div>
+    </form>
+  </div></main>
+  <footer class="footer"><div class="container footer-inner"><span>ThugTools</span><span>Quality 1 is maximum compression.</span></div></footer><div class="toast"></div><div class="spinner"><div class="loader"></div></div><script src="../script.js?v=20260511-advanced-image"></script>
+</body>
+</html>

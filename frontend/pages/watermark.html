@@ -1,0 +1,31 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Watermark Studio - ThugTools</title>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@500;650;750;850;900&display=swap" rel="stylesheet"><link rel="stylesheet" href="../style.css">
+</head>
+<body>
+  <div class="rgb-line"></div><nav class="nav"><div class="container nav-inner"><a class="brand" href="../index.html"><div class="brand-mark">T</div><span>ThugTools</span></a><div class="nav-links"><a href="../index.html#tools">Tools</a><a class="active" href="#">Watermark</a></div><div class="nav-actions"><button class="icon-btn" data-theme aria-label="Toggle theme"><span data-icon="sun"></span></button><button class="menu-btn" aria-label="Open menu"><span data-icon="menu"></span></button></div></div></nav>
+  <main class="tool-shell"><div class="container tool-panel reveal">
+    <section class="tool-intro"><span class="eyebrow">Creator protection</span><h1>Watermark Studio</h1><p class="lead">Add a clean professional watermark to images for social media, portfolio previews, and product samples.</p></section>
+    <form class="form-stack" data-upload-form data-watermark-form data-endpoint="/api/image/watermark">
+      <label class="upload-zone"><input type="file" name="file" accept="image/*" required><div><div data-icon="upload"></div><h3>Drop image here</h3><p data-file-name>or tap to browse</p></div></label>
+      <input class="input" name="text" maxlength="80" placeholder="Watermark text" value="ThugTools">
+      <div class="control-grid">
+        <label><span>Font</span><select name="font"><option value="arial">Arial</option><option value="arial-bold">Arial Bold</option><option value="georgia">Georgia</option><option value="times">Times</option><option value="verdana">Verdana</option><option value="trebuchet">Trebuchet</option></select></label>
+        <label><span>Color</span><input type="color" name="color" value="#111827"></label>
+        <label><span>Background</span><select name="badge"><option value="soft">Soft label</option><option value="none">No box</option><option value="dark">Dark label</option><option value="light">Light label</option></select></label>
+        <label><span>Preset</span><select name="position"><option value="manual">Manual drag</option><option value="bottom-right">Bottom right</option><option value="bottom-left">Bottom left</option><option value="top-right">Top right</option><option value="top-left">Top left</option><option value="center">Center</option><option value="tile">Repeat tile</option></select></label>
+      </div>
+      <input type="hidden" name="x" value="78">
+      <input type="hidden" name="y" value="82">
+      <label>Size <input type="range" name="size" min="8" max="30" value="16"></label>
+      <label>Opacity <input type="range" name="opacity" min="10" max="85" value="38"></label>
+      <label>Rotate <input type="range" name="angle" min="-45" max="45" value="0"></label>
+      <button class="btn" type="submit">Add watermark</button><div class="progress-wrap"><div class="progress-bar"></div></div><div class="preview-grid"><div class="preview-card"><span>Before</span><div data-before></div></div><div class="preview-card"><span>After</span><div data-after></div></div></div><div class="result-box" data-result></div>
+    </form>
+  </div></main>
+  <footer class="footer"><div class="container footer-inner"><span>ThugTools</span><span>Drag the watermark preview to place it by hand.</span></div></footer><div class="toast"></div><div class="spinner"><div class="loader"></div></div><script src="../script.js?v=20260511-advanced-image"></script>
+</body>
+</html>

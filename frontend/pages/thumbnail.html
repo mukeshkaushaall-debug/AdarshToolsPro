@@ -1,0 +1,19 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>YouTube Thumbnail Downloader - ThugTools</title>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@500;650;750;850;900&display=swap" rel="stylesheet"><link rel="stylesheet" href="../style.css">
+</head>
+<body>
+  <div class="rgb-line"></div><nav class="nav"><div class="container nav-inner"><a class="brand" href="../index.html"><div class="brand-mark">T</div><span>ThugTools</span></a><div class="nav-links"><a href="../index.html#tools">Tools</a><a class="active" href="#">Thumbnail</a></div><div class="nav-actions"><button class="icon-btn" data-theme aria-label="Toggle theme"><span data-icon="sun"></span></button><button class="menu-btn" aria-label="Open menu"><span data-icon="menu"></span></button></div></div></nav>
+  <main class="tool-shell"><div class="container tool-panel reveal">
+    <section class="tool-intro"><span class="eyebrow">Max resolution image</span><h1>YouTube Thumbnail Downloader</h1><p class="lead">Fetch the best available YouTube thumbnail and preview it instantly before download.</p></section>
+    <form class="form-stack" data-url-form data-endpoint="/api/youtube/thumbnail">
+      <input class="input" type="url" name="url" placeholder="https://youtu.be/..." required>
+      <button class="btn" type="submit">Get thumbnail</button><div class="progress-wrap"><div class="progress-bar"></div></div><div class="result-box" data-result></div>
+    </form>
+  </div></main>
+  <footer class="footer"><div class="container footer-inner"><span>ThugTools</span><span>Downloads maxres, sd, or hq thumbnail.</span></div></footer><div class="toast"></div><div class="spinner"><div class="loader"></div></div><script src="../script.js?v=20260511-advanced-image"></script>
+</body>
+</html>

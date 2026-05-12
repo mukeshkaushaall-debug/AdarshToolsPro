@@ -1,0 +1,11 @@
+backend/venv/
+backend/__pycache__/
+backend/uploads/*
+backend/downloads/*
+backend/server.out.log
+backend/server.err.log
+**/.DS_Store
+**/__pycache__/
+*.pyc
+.git/
+.gitignore
