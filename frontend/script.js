@@ -343,6 +343,11 @@ function resultMeta(data) {
   if (data.page_count) items.push(`${data.page_count} page${Number(data.page_count) === 1 ? "" : "s"}`);
   if (data.item_count) items.push(`${data.item_count} item${Number(data.item_count) === 1 ? "" : "s"}`);
   if (data.total) items.push(`Total ${data.total}`);
+  if (data.video_height) {
+    const fps = data.video_fps ? ` ${Math.round(Number(data.video_fps))}fps` : "";
+    items.push(`${data.video_width || ""}${data.video_width ? "x" : ""}${data.video_height}p${fps}`);
+  }
+  if (data.file_size) items.push(formatBytes(data.file_size));
   if (data.original_width && data.output_width) {
     items.push(`${data.original_width}x${data.original_height}px to ${data.output_width}x${data.output_height}px`);
   }

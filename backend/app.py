@@ -207,6 +207,7 @@ def ytdlp_base_opts():
         "no_warnings": True,
         "noprogress": True,
         "logger": QuietYtdlpLogger(),
+        "ignoreconfig": True,
         "noplaylist": True,
         "cachedir": False,
         "retries": 3,
@@ -217,7 +218,6 @@ def ytdlp_base_opts():
             "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36",
             "Accept-Language": "en-US,en;q=0.9,hi;q=0.8",
         },
-        "extractor_args": {"youtube": {"player_client": ["android", "ios", "web"]}},
     }
     cookies_file = os.environ.get("YOUTUBE_COOKIES_FILE")
     if cookies_file and Path(cookies_file).exists():
@@ -936,6 +936,24 @@ def convert_video_file_to_mp3(source):
     return {"success": True, "title": source.name, "filename": out.name, "download_url": public_download_url(out.name), "download_label": "Download MP3"}
 
 
+def downloaded_video_details(info):
+    downloads = info.get("requested_downloads") or []
+    video_parts = [item for item in downloads if item.get("vcodec") and item.get("vcodec") != "none"]
+    selected = video_parts[0] if video_parts else info
+    height = selected.get("height") or info.get("height")
+    width = selected.get("width") or info.get("width")
+    fps = selected.get("fps") or info.get("fps")
+    codec = selected.get("vcodec") or info.get("vcodec")
+    format_id = selected.get("format_id") or info.get("format_id")
+    return {
+        "video_width": width,
+        "video_height": height,
+        "video_fps": fps,
+        "video_codec": codec,
+        "format_id": format_id,
+    }
+
+
 def run_yt_dlp(url, mode, quality="1080"):
     output_prefix = make_id()
     output_template = str(DOWNLOAD_DIR / f"{output_prefix}_%(title).80s.%(ext)s")
@@ -966,6 +984,10 @@ def run_yt_dlp(url, mode, quality="1080"):
             height_filter = f"[height<={height}]"
         has_ffmpeg = shutil.which("ffmpeg") is not None
         merged_format = (
+            f"bestvideo[height={height}][ext=mp4]+bestaudio[ext=m4a]/" if height_filter else ""
+        ) + (
+            f"bestvideo[height={height}]+bestaudio/" if height_filter else ""
+        ) + (
             f"bestvideo{height_filter}[ext=mp4]+bestaudio[ext=m4a]/"
             f"bestvideo{height_filter}+bestaudio/"
             f"best{height_filter}/best"
@@ -989,12 +1011,15 @@ def run_yt_dlp(url, mode, quality="1080"):
     if not after:
         raise ApiError("Download finished but the output file was not found.", 500)
     file_path = max(after, key=lambda p: p.stat().st_mtime)
+    details = downloaded_video_details(info) if mode != "audio" else {}
     return {
         "success": True,
         "title": info.get("title", "Downloaded file"),
         "filename": file_path.name,
+        "file_size": file_path.stat().st_size,
         "download_url": public_download_url(file_path.name),
         "download_label": "Download MP3" if mode == "audio" else "Download video",
+        **details,
     }
 
 
