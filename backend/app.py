@@ -20,6 +20,7 @@ from flask import Flask, jsonify, request, send_file, send_from_directory
 from flask_cors import CORS
 from PIL import Image, ImageChops, ImageDraw, ImageEnhance, ImageFilter, ImageFont, ImageOps
 from werkzeug.utils import secure_filename
+from werkzeug.exceptions import HTTPException
 from yt_dlp import YoutubeDL
 from yt_dlp.utils import DownloadError
 
@@ -124,6 +125,13 @@ def handle_too_large(_):
 @app.errorhandler(DownloadError)
 def handle_download_error(error):
     return jsonify({"success": False, "error": simplify_download_error(str(error))}), 400
+
+
+@app.errorhandler(HTTPException)
+def handle_http_error(error):
+    if request.path.startswith("/api/"):
+        return jsonify({"success": False, "error": error.description}), error.code
+    return error
 
 
 @app.errorhandler(Exception)
@@ -952,6 +960,16 @@ def run_yt_dlp(url, mode, quality="1080"):
 @app.route("/")
 def home():
     return send_from_directory(FRONTEND_DIR, "index.html")
+
+
+@app.route("/healthz")
+def healthz():
+    return jsonify({"success": True, "status": "ok"})
+
+
+@app.route("/favicon.ico")
+def favicon():
+    return "", 204
 
 
 @app.route("/pages/<path:filename>")
