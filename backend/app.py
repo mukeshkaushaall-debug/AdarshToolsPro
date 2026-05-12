@@ -957,11 +957,23 @@ def run_yt_dlp(url, mode, quality="1080"):
             }],
         }
     else:
-        height = re.sub(r"[^0-9]", "", str(quality or "1080")) or "1080"
+        quality_value = str(quality or "best").lower()
+        height = re.sub(r"[^0-9]", "", quality_value)
+        if quality_value == "best" or not height:
+            height_filter = ""
+        else:
+            height = str(max(144, min(4320, int(height))))
+            height_filter = f"[height<={height}]"
         has_ffmpeg = shutil.which("ffmpeg") is not None
+        merged_format = (
+            f"bestvideo{height_filter}[ext=mp4]+bestaudio[ext=m4a]/"
+            f"bestvideo{height_filter}+bestaudio/"
+            f"best{height_filter}/best"
+        )
+        single_file_format = f"best{height_filter}/best"
         ydl_opts = {
             **common_opts,
-            "format": f"bestvideo[height<={height}]+bestaudio/best[height<={height}]/best" if has_ffmpeg else f"best[height<={height}]/best",
+            "format": merged_format if has_ffmpeg else single_file_format,
         }
         if has_ffmpeg:
             ydl_opts["merge_output_format"] = "mp4"

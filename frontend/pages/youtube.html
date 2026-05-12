@@ -10,10 +10,10 @@
   <div class="rgb-line"></div>
   <nav class="nav"><div class="container nav-inner"><a class="brand" href="../index.html"><div class="brand-mark">T</div><span>ThugTools</span></a><div class="nav-links"><a href="../index.html#tools">Tools</a><a class="active" href="#">YouTube</a></div><div class="nav-actions"><button class="icon-btn" data-theme aria-label="Toggle theme"><span data-icon="sun"></span></button><button class="menu-btn" aria-label="Open menu"><span data-icon="menu"></span></button></div></div></nav>
   <main class="tool-shell"><div class="container tool-panel reveal">
-    <section class="tool-intro"><span class="eyebrow">HD video downloader</span><h1>YouTube Video Downloader</h1><p class="lead">Paste a public YouTube video link and download the best MP4 quality up to 1080p when available.</p></section>
+    <section class="tool-intro"><span class="eyebrow">HD video downloader</span><h1>YouTube Video Downloader</h1><p class="lead">Paste a public YouTube video link and download the best available quality up to 4K when available.</p></section>
     <form class="form-stack" data-url-form data-endpoint="/api/download/youtube">
       <input class="input" type="url" name="url" placeholder="https://www.youtube.com/watch?v=..." required>
-      <select name="quality"><option value="1080">1080p HD</option><option value="720">720p</option><option value="480">480p</option></select>
+      <select name="quality"><option value="best">Best available</option><option value="2160">2160p 4K</option><option value="1440">1440p 2K</option><option value="1080">1080p HD</option><option value="720">720p</option><option value="480">480p</option></select>
       <button class="btn" type="submit">Download video</button><div class="progress-wrap"><div class="progress-bar"></div></div><div class="result-box" data-result></div>
     </form>
   </div></main>

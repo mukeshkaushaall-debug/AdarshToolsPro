@@ -1,7 +1,7 @@
 const API_BASE = window.location.protocol === "file:" ? "http://127.0.0.1:5000" : "";
 
 const tools = [
-  ["youtube", "YouTube Video Downloader", "Download HD videos up to 1080p when available.", "youtube", "linear-gradient(135deg,#ff0033,#ff7a59)", "pages/youtube.html"],
+  ["youtube", "YouTube Video Downloader", "Download HD videos up to 4K when available.", "youtube", "linear-gradient(135deg,#ff0033,#ff7a59)", "pages/youtube.html"],
   ["pinterest", "Pinterest Downloader", "Download public Pinterest videos and media.", "pinterest", "linear-gradient(135deg,#e60023,#ff758f)", "pages/pinterest.html"],
   ["thumbnail", "YouTube Thumbnail Downloader", "Download high-resolution YouTube thumbnails.", "youtube", "linear-gradient(135deg,#ff0033,#ff7a59)", "pages/thumbnail.html"],
   ["qr", "QR Code Generator", "Create crisp QR codes for URLs, payments, and profiles.", "qr", "linear-gradient(135deg,#111827,#f59e0b)", "pages/qr.html"],
