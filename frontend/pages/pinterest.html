@@ -2,7 +2,23 @@
 <html lang="en">
 <head>
   <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Pinterest Downloader - ThugTools</title>
+  <title>Pinterest Video Downloader Online | ThugTools</title>
+  <!-- SEO START -->
+  <meta name="description" content="Paste a public Pinterest video or media link and download it quickly with a clean online downloader.">
+  <meta name="robots" content="index, follow, max-image-preview:large">
+  <link rel="canonical" href="/pages/pinterest.html">
+  <meta property="og:type" content="website">
+  <meta property="og:site_name" content="ThugTools">
+  <meta property="og:title" content="Pinterest Video Downloader Online | ThugTools">
+  <meta property="og:description" content="Paste a public Pinterest video or media link and download it quickly with a clean online downloader.">
+  <meta property="og:url" content="/pages/pinterest.html">
+  <meta property="og:image" content="/assets/remove-bg-logo.png">
+  <meta name="twitter:card" content="summary_large_image">
+  <meta name="twitter:title" content="Pinterest Video Downloader Online | ThugTools">
+  <meta name="twitter:description" content="Paste a public Pinterest video or media link and download it quickly with a clean online downloader.">
+  <meta name="twitter:image" content="/assets/remove-bg-logo.png">
+  <meta name="theme-color" content="#111827">
+  <!-- SEO END -->
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@500;650;750;850;900&display=swap" rel="stylesheet"><link rel="stylesheet" href="../style.css">
 </head>
 <body>
@@ -11,8 +27,10 @@
     <section class="tool-intro"><span class="eyebrow">Pinterest media saver</span><h1>Pinterest Downloader</h1><p class="lead">Paste a public Pinterest video or media URL and export it through the Flask downloader API.</p></section>
     <form class="form-stack" data-url-form data-endpoint="/api/download/pinterest">
       <input class="input" type="url" name="url" placeholder="https://www.pinterest.com/pin/..." required>
+      <select name="quality"><option value="best">Best available</option><option value="1080">1080p HD</option><option value="720">720p</option><option value="480">480p</option><option value="360">360p</option></select>
       <button class="btn" type="submit">Download media</button><div class="progress-wrap"><div class="progress-bar"></div></div><div class="result-box" data-result></div>
     </form>
+    <section class="tool-seo-copy"><h2>Pinterest video downloader for public pins</h2><p>Use this Pinterest downloader to save public Pinterest video or media links in a simple browser workflow. The quality selector helps you request Best available, HD, or smaller exports when the source provides multiple formats. It is useful for creators who need quick reference files, idea boards, or owned content saved locally.</p><h3>FAQ</h3><p><strong>Does quality selection always change the file?</strong> It depends on the formats Pinterest exposes for that public URL.</p><p><strong>What links work best?</strong> Public pin URLs and accessible media links work best; private or blocked pages may fail.</p></section>
   </div></main>
   <footer class="footer"><div class="container footer-inner"><span>ThugTools</span><span>Use with public content you can legally download.</span></div></footer><div class="toast"></div><div class="spinner"><div class="loader"></div></div><script src="../script.js?v=20260511-advanced-image"></script>
 </body>

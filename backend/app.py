@@ -16,7 +16,7 @@ from urllib.parse import parse_qs, unquote, urlparse
 
 import requests
 import certifi
-from flask import Flask, jsonify, request, send_file, send_from_directory
+from flask import Flask, Response, jsonify, request, send_file, send_from_directory
 from flask_cors import CORS
 from PIL import Image, ImageChops, ImageDraw, ImageEnhance, ImageFilter, ImageFont, ImageOps
 from werkzeug.utils import secure_filename
@@ -90,6 +90,25 @@ CLEANUP_INTERVAL_SECONDS = 60
 _last_cleanup_at = 0
 FONT_DIR = Path(os.environ.get("WINDIR", "C:\\Windows")) / "Fonts"
 RUNTIME_COOKIES_FILE = Path(os.environ.get("TMPDIR", BASE_DIR)) / "youtube_cookies.txt"
+SEO_PAGES = [
+    ("/", "daily", "1.0"),
+    ("/pages/youtube.html", "weekly", "0.9"),
+    ("/pages/pinterest.html", "weekly", "0.9"),
+    ("/pages/instagram.html", "weekly", "0.9"),
+    ("/pages/thumbnail.html", "weekly", "0.9"),
+    ("/pages/qr.html", "weekly", "0.9"),
+    ("/pages/pdf-to-image.html", "weekly", "0.8"),
+    ("/pages/image-to-pdf.html", "weekly", "0.8"),
+    ("/pages/compress.html", "weekly", "0.9"),
+    ("/pages/removebg.html", "weekly", "0.9"),
+    ("/pages/upscale.html", "weekly", "0.8"),
+    ("/pages/enhance.html", "weekly", "0.8"),
+    ("/pages/blur.html", "weekly", "0.8"),
+    ("/pages/convert.html", "weekly", "0.8"),
+    ("/pages/watermark.html", "weekly", "0.8"),
+    ("/pages/audio.html", "weekly", "0.8"),
+    ("/pages/policy.html", "monthly", "0.4"),
+]
 
 app = Flask(__name__, static_folder=str(FRONTEND_DIR), static_url_path="")
 app.config["MAX_CONTENT_LENGTH"] = MAX_CONTENT_LENGTH
@@ -1051,7 +1070,80 @@ def run_yt_dlp(url, mode, quality="1080"):
 
 @app.route("/")
 def home():
-    return send_from_directory(FRONTEND_DIR, "index.html")
+    return seo_html("index.html")
+
+
+def site_url():
+    configured = os.environ.get("SITE_URL", "").strip().rstrip("/")
+    if configured:
+        return configured
+    return request.host_url.rstrip("/")
+
+
+def absolute_url(path):
+    if path.startswith(("http://", "https://")):
+        return path
+    return f"{site_url()}{path if path.startswith('/') else '/' + path}"
+
+
+def seo_html(filename, subdir=None):
+    folder = FRONTEND_DIR / subdir if subdir else FRONTEND_DIR
+    path = (folder / filename).resolve()
+    if folder.resolve() not in path.parents or not path.exists():
+        return send_from_directory(folder, filename)
+    html = path.read_text(encoding="utf-8")
+    html = re.sub(
+        r'(<link rel="canonical" href=")(/[^"]*)(")',
+        lambda match: f'{match.group(1)}{absolute_url(match.group(2))}{match.group(3)}',
+        html,
+    )
+    html = re.sub(
+        r'(<meta property="og:url" content=")(/[^"]*)(")',
+        lambda match: f'{match.group(1)}{absolute_url(match.group(2))}{match.group(3)}',
+        html,
+    )
+    html = re.sub(
+        r'(<meta (?:property="og:image"|name="twitter:image") content=")(/[^"]*)(")',
+        lambda match: f'{match.group(1)}{absolute_url(match.group(2))}{match.group(3)}',
+        html,
+    )
+    return Response(html, mimetype="text/html")
+
+
+@app.route("/robots.txt")
+def robots_txt():
+    base = site_url()
+    body = "\n".join([
+        "User-agent: *",
+        "Allow: /",
+        "Disallow: /api/",
+        "Disallow: /download/",
+        "",
+        f"Sitemap: {base}/sitemap.xml",
+        "",
+    ])
+    return Response(body, mimetype="text/plain")
+
+
+@app.route("/sitemap.xml")
+def sitemap_xml():
+    base = site_url()
+    today = time.strftime("%Y-%m-%d")
+    urls = []
+    for path, changefreq, priority in SEO_PAGES:
+        urls.append(
+            "  <url>\n"
+            f"    <loc>{base}{path}</loc>\n"
+            f"    <lastmod>{today}</lastmod>\n"
+            f"    <changefreq>{changefreq}</changefreq>\n"
+            f"    <priority>{priority}</priority>\n"
+            "  </url>"
+        )
+    body = "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n"
+    body += "<urlset xmlns=\"http://www.sitemaps.org/schemas/sitemap/0.9\">\n"
+    body += "\n".join(urls)
+    body += "\n</urlset>\n"
+    return Response(body, mimetype="application/xml")
 
 
 @app.route("/healthz")
@@ -1077,6 +1169,8 @@ def favicon():
 
 @app.route("/pages/<path:filename>")
 def pages(filename):
+    if filename.endswith(".html"):
+        return seo_html(filename, "pages")
     return send_from_directory(FRONTEND_DIR / "pages", filename)
 
 
@@ -1123,7 +1217,8 @@ def instagram_download():
     cleanup_temp_storage()
     data = request.get_json(silent=True) or request.form
     url = clean_url(data.get("url"))
-    return jsonify(run_yt_dlp(url, "video", "1080"))
+    quality = data.get("quality", "best")
+    return jsonify(run_yt_dlp(url, "video", quality))
 
 
 @app.post("/api/download/pinterest")
@@ -1131,7 +1226,8 @@ def pinterest_download():
     cleanup_temp_storage()
     data = request.get_json(silent=True) or request.form
     url = clean_url(data.get("url"))
-    return jsonify(run_yt_dlp(url, "video", "1080"))
+    quality = data.get("quality", "best")
+    return jsonify(run_yt_dlp(url, "video", quality))
 
 
 @app.post("/api/convert/audio")
@@ -1335,15 +1431,19 @@ def image_removebg():
         feather = max(0, min(feather, 8))
         background = request.form.get("background", "transparent")
         if remove_background is not None:
-            result = remove_background(
-                source.read_bytes(),
-                alpha_matting=True,
-                alpha_matting_foreground_threshold=240,
-                alpha_matting_background_threshold=10,
-                alpha_matting_erode_size=8,
-            )
-            out.write_bytes(result)
-            postprocess_cutout(out, feather=feather, background=background)
+            try:
+                result = remove_background(
+                    source.read_bytes(),
+                    alpha_matting=True,
+                    alpha_matting_foreground_threshold=240,
+                    alpha_matting_background_threshold=10,
+                    alpha_matting_erode_size=8,
+                )
+                out.write_bytes(result)
+                postprocess_cutout(out, feather=feather, background=background)
+            except Exception:
+                app.logger.exception("rembg failed; using local fallback")
+                remove_background_fallback(source, out, feather=feather, background=background)
         else:
             remove_background_fallback(source, out, feather=feather, background=background)
         return jsonify(image_response(out, "Download PNG image"))
