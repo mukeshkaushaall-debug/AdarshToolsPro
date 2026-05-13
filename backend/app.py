@@ -218,7 +218,7 @@ def simplify_download_error(message):
     if "copyright" in lowered or "unavailable" in lowered:
         return "This media is unavailable from the source site."
     if "requested format is not available" in lowered:
-        return "Requested quality is not available. Try 720p or 480p."
+        return "Requested quality is not available. Try Best available or a lower quality."
     return msg.replace("ERROR:", "").strip()[:220] or "Could not download this media. Try another public link."
 
 
@@ -1001,8 +1001,8 @@ def ytdlp_video_format(quality, has_ffmpeg):
         return "bv*+ba/b" if has_ffmpeg else "b", None
     height = str(max(144, min(4320, int(height))))
     if has_ffmpeg:
-        return f"bv*[height={height}]+ba/bv*[height<={height}]+ba/b[height<={height}]/bv*+ba/b", height
-    return f"b[height={height}]/b[height<={height}]/b", height
+        return f"bv*[height<={height}]+ba/b[height<={height}]/bv*+ba/b", height
+    return f"b[height<={height}]/b", height
 
 
 def run_yt_dlp(url, mode, quality="1080"):
