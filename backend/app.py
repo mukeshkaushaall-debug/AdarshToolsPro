@@ -22,6 +22,7 @@ from flask_cors import CORS
 from PIL import Image, ImageChops, ImageDraw, ImageEnhance, ImageFilter, ImageFont, ImageOps
 from werkzeug.utils import secure_filename
 from werkzeug.exceptions import HTTPException
+from werkzeug.middleware.proxy_fix import ProxyFix
 from yt_dlp import YoutubeDL
 from yt_dlp.version import __version__ as YTDLP_VERSION
 from yt_dlp.utils import DownloadError
@@ -113,6 +114,7 @@ SEO_PAGES = [
 ]
 
 app = Flask(__name__, static_folder=str(FRONTEND_DIR), static_url_path="")
+app.wsgi_app = ProxyFix(app.wsgi_app, x_for=1, x_proto=1, x_host=1)
 app.config["MAX_CONTENT_LENGTH"] = MAX_CONTENT_LENGTH
 CORS(app)
 
