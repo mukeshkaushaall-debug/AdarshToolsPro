@@ -22,6 +22,7 @@ from PIL import Image, ImageChops, ImageDraw, ImageEnhance, ImageFilter, ImageFo
 from werkzeug.utils import secure_filename
 from werkzeug.exceptions import HTTPException
 from yt_dlp import YoutubeDL
+from yt_dlp.version import __version__ as YTDLP_VERSION
 from yt_dlp.utils import DownloadError
 
 BASE_DIR = Path(__file__).resolve().parent
@@ -186,7 +187,7 @@ def simplify_download_error(message):
     msg = re.sub(r"\s+", " ", message or "").strip()
     lowered = msg.lower()
     if "confirm you" in lowered and "bot" in lowered:
-        return "YouTube is blocking this server as automated traffic. Redeploy with latest yt-dlp, or set YOUTUBE_COOKIES_FILE on the server."
+        return "YouTube is blocking this server as automated traffic. Add/share YOUTUBE_COOKIES_TEXT in Railway Variables, then redeploy."
     if "sign in to confirm" in lowered or "login" in lowered or "private" in lowered:
         return "This video needs login or is private. Try a public link."
     if "certificate_verify_failed" in lowered or "certificate verify failed" in lowered or "ssl" in lowered:
@@ -232,6 +233,17 @@ def ytdlp_base_opts():
             except OSError:
                 pass
     return opts
+
+
+def youtube_cookie_status():
+    cookies_file = os.environ.get("YOUTUBE_COOKIES_FILE", "")
+    cookies_text = os.environ.get("YOUTUBE_COOKIES_TEXT", "")
+    return {
+        "cookies_file_configured": bool(cookies_file),
+        "cookies_file_exists": bool(cookies_file and Path(cookies_file).exists()),
+        "cookies_text_configured": bool(cookies_text.strip()),
+        "cookies_text_length": len(cookies_text),
+    }
 
 
 def extract_info_safe(url, download=False, extra_opts=None):
@@ -1040,6 +1052,17 @@ def home():
 @app.route("/healthz")
 def healthz():
     return jsonify({"success": True, "status": "ok"})
+
+
+@app.route("/api/youtube/status")
+def youtube_status():
+    return jsonify({
+        "success": True,
+        "ffmpeg": bool(shutil.which("ffmpeg")),
+        "ffmpeg_path": shutil.which("ffmpeg") or "",
+        "yt_dlp_version": YTDLP_VERSION,
+        **youtube_cookie_status(),
+    })
 
 
 @app.route("/favicon.ico")
