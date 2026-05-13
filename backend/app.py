@@ -994,6 +994,94 @@ def downloaded_video_details(info):
     }
 
 
+def requested_video_height(quality):
+    quality_value = str(quality or "best").lower()
+    height = re.sub(r"[^0-9]", "", quality_value)
+    if quality_value == "best" or not height:
+        return None
+    return max(144, min(4320, int(height)))
+
+
+def format_number(value, default=0):
+    try:
+        return float(value or default)
+    except (TypeError, ValueError):
+        return default
+
+
+def video_format_score(item):
+    return (
+        format_number(item.get("height")),
+        format_number(item.get("fps")),
+        format_number(item.get("tbr")),
+        format_number(item.get("vbr")),
+        format_number(item.get("filesize") or item.get("filesize_approx")),
+    )
+
+
+def audio_format_score(item):
+    return (
+        format_number(item.get("abr")),
+        format_number(item.get("tbr")),
+        format_number(item.get("filesize") or item.get("filesize_approx")),
+    )
+
+
+def choose_available_video_format(info, quality, has_ffmpeg):
+    requested_height = requested_video_height(quality)
+    formats = info.get("formats") or []
+    videos = [
+        item for item in formats
+        if item.get("format_id")
+        and item.get("vcodec")
+        and item.get("vcodec") != "none"
+        and format_number(item.get("height")) > 0
+    ]
+    audios = [
+        item for item in formats
+        if item.get("format_id")
+        and item.get("acodec")
+        and item.get("acodec") != "none"
+        and (not item.get("vcodec") or item.get("vcodec") == "none")
+    ]
+    progressive = [
+        item for item in videos
+        if item.get("acodec") and item.get("acodec") != "none"
+    ]
+    if requested_height:
+        limited_videos = [item for item in videos if format_number(item.get("height")) <= requested_height]
+        limited_progressive = [item for item in progressive if format_number(item.get("height")) <= requested_height]
+    else:
+        limited_videos = videos
+        limited_progressive = progressive
+
+    selected = max(limited_videos or videos, key=video_format_score, default=None)
+    if not selected:
+        return ytdlp_video_format(quality, has_ffmpeg)[0], "", None
+
+    selected_height = int(format_number(selected.get("height")))
+    note = ""
+    if requested_height and selected_height and selected_height != requested_height:
+        note = f"Downloaded {selected_height}p because {requested_height}p was not available."
+
+    selected_id = selected["format_id"]
+    if has_ffmpeg:
+        if selected.get("acodec") and selected.get("acodec") != "none":
+            return f"{selected_id}/b", note, selected_height
+        audio = max(audios, key=audio_format_score, default=None)
+        if audio:
+            return f"{selected_id}+{audio['format_id']}/{selected_id}/b", note, selected_height
+        return f"{selected_id}/b", note, selected_height
+
+    progressive_selected = max(limited_progressive or progressive, key=video_format_score, default=None)
+    if progressive_selected:
+        progressive_height = int(format_number(progressive_selected.get("height")))
+        if requested_height and progressive_height and progressive_height != requested_height:
+            note = f"Downloaded {progressive_height}p because {requested_height}p was not available without FFmpeg merge."
+        return f"{progressive_selected['format_id']}/b", note, progressive_height
+    return "b", "Downloaded best available single-file quality because FFmpeg merge is not available.", None
+
+
 def ytdlp_video_format(quality, has_ffmpeg):
     quality_value = str(quality or "best").lower()
     height = re.sub(r"[^0-9]", "", quality_value)
@@ -1028,7 +1116,8 @@ def run_yt_dlp(url, mode, quality="1080"):
         }
     else:
         has_ffmpeg = shutil.which("ffmpeg") is not None
-        format_selector, _height = ytdlp_video_format(quality, has_ffmpeg)
+        probe_info, _ = extract_info_safe(url, download=False, extra_opts={"skip_download": True})
+        format_selector, quality_note, _height = choose_available_video_format(probe_info, quality, has_ffmpeg)
         ydl_opts = {
             **common_opts,
             "format": format_selector,
@@ -1041,10 +1130,12 @@ def run_yt_dlp(url, mode, quality="1080"):
     except ApiError as error:
         if mode != "audio" and "Requested quality is not available" in error.message:
             ydl_opts["format"] = "bv*+ba/b" if shutil.which("ffmpeg") else "b"
-            fallback_note = "Requested quality was not available, so best available quality was downloaded."
+            fallback_note = "Downloaded best available quality from the formats exposed by the source."
             info, ydl = extract_info_safe(url, download=True, extra_opts=ydl_opts)
         else:
             raise
+    if mode != "audio" and not fallback_note:
+        fallback_note = quality_note
     after = [p for p in DOWNLOAD_DIR.glob(f"{output_prefix}_*") if p.is_file()]
     if not after:
         requested = ydl.prepare_filename(info)
