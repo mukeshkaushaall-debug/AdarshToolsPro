@@ -348,6 +348,7 @@ function resultMeta(data) {
     items.push(`${data.video_width || ""}${data.video_width ? "x" : ""}${data.video_height}p${fps}`);
   }
   if (data.file_size) items.push(formatBytes(data.file_size));
+  if (data.note) items.push(data.note);
   if (data.original_width && data.output_width) {
     items.push(`${data.original_width}x${data.original_height}px to ${data.output_width}x${data.output_height}px`);
   }

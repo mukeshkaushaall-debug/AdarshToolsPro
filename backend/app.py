@@ -975,6 +975,17 @@ def downloaded_video_details(info):
     }
 
 
+def ytdlp_video_format(quality, has_ffmpeg):
+    quality_value = str(quality or "best").lower()
+    height = re.sub(r"[^0-9]", "", quality_value)
+    if quality_value == "best" or not height:
+        return "bv*+ba/b" if has_ffmpeg else "b", None
+    height = str(max(144, min(4320, int(height))))
+    if has_ffmpeg:
+        return f"bv*[height={height}]+ba/bv*[height<={height}]+ba/b[height<={height}]/bv*+ba/b", height
+    return f"b[height={height}]/b[height<={height}]/b", height
+
+
 def run_yt_dlp(url, mode, quality="1080"):
     output_prefix = make_id()
     output_template = str(DOWNLOAD_DIR / f"{output_prefix}_%(title).80s.%(ext)s")
@@ -984,6 +995,7 @@ def run_yt_dlp(url, mode, quality="1080"):
         "restrictfilenames": True,
         "windowsfilenames": True,
     }
+    fallback_note = ""
     if mode == "audio":
         require_ffmpeg()
         ydl_opts = {
@@ -996,32 +1008,24 @@ def run_yt_dlp(url, mode, quality="1080"):
             }],
         }
     else:
-        quality_value = str(quality or "best").lower()
-        height = re.sub(r"[^0-9]", "", quality_value)
-        if quality_value == "best" or not height:
-            height_filter = ""
-        else:
-            height = str(max(144, min(4320, int(height))))
-            height_filter = f"[height<={height}]"
         has_ffmpeg = shutil.which("ffmpeg") is not None
-        merged_format = (
-            f"bestvideo[height={height}][ext=mp4]+bestaudio[ext=m4a]/" if height_filter else ""
-        ) + (
-            f"bestvideo[height={height}]+bestaudio/" if height_filter else ""
-        ) + (
-            f"bestvideo{height_filter}[ext=mp4]+bestaudio[ext=m4a]/"
-            f"bestvideo{height_filter}+bestaudio/"
-            f"best{height_filter}/best"
-        )
-        single_file_format = f"best{height_filter}/best"
+        format_selector, _height = ytdlp_video_format(quality, has_ffmpeg)
         ydl_opts = {
             **common_opts,
-            "format": merged_format if has_ffmpeg else single_file_format,
+            "format": format_selector,
         }
         if has_ffmpeg:
             ydl_opts["merge_output_format"] = "mp4"
 
-    info, ydl = extract_info_safe(url, download=True, extra_opts=ydl_opts)
+    try:
+        info, ydl = extract_info_safe(url, download=True, extra_opts=ydl_opts)
+    except ApiError as error:
+        if mode != "audio" and "Requested quality is not available" in error.message:
+            ydl_opts["format"] = "bv*+ba/b" if shutil.which("ffmpeg") else "b"
+            fallback_note = "Requested quality was not available, so best available quality was downloaded."
+            info, ydl = extract_info_safe(url, download=True, extra_opts=ydl_opts)
+        else:
+            raise
     after = [p for p in DOWNLOAD_DIR.glob(f"{output_prefix}_*") if p.is_file()]
     if not after:
         requested = ydl.prepare_filename(info)
@@ -1040,6 +1044,7 @@ def run_yt_dlp(url, mode, quality="1080"):
         "file_size": file_path.stat().st_size,
         "download_url": public_download_url(file_path.name),
         "download_label": "Download MP3" if mode == "audio" else "Download video",
+        "note": fallback_note,
         **details,
     }
 
