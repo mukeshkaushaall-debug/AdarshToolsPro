@@ -90,6 +90,7 @@ CLEANUP_INTERVAL_SECONDS = 60
 _last_cleanup_at = 0
 FONT_DIR = Path(os.environ.get("WINDIR", "C:\\Windows")) / "Fonts"
 RUNTIME_COOKIES_FILE = Path(os.environ.get("TMPDIR", BASE_DIR)) / "youtube_cookies.txt"
+YOUTUBE_COOKIES_HELP = "YouTube is blocking this server as automated traffic. Add YOUTUBE_COOKIES_TEXT in Railway Variables, then redeploy."
 SEO_PAGES = [
     ("/", "daily", "1.0"),
     ("/pages/youtube.html", "weekly", "0.9"),
@@ -205,8 +206,8 @@ def cleanup_temp_storage():
 def simplify_download_error(message):
     msg = re.sub(r"\s+", " ", message or "").strip()
     lowered = msg.lower()
-    if "confirm you" in lowered and "bot" in lowered:
-        return "YouTube is blocking this server as automated traffic. Add/share YOUTUBE_COOKIES_TEXT in Railway Variables, then redeploy."
+    if ("confirm you" in lowered and "bot" in lowered) or ("automated" in lowered and "traffic" in lowered):
+        return YOUTUBE_COOKIES_HELP
     if "sign in to confirm" in lowered or "login" in lowered or "private" in lowered:
         return "This video needs login or is private. Try a public link."
     if "certificate_verify_failed" in lowered or "certificate verify failed" in lowered or "ssl" in lowered:
@@ -218,7 +219,7 @@ def simplify_download_error(message):
     if "copyright" in lowered or "unavailable" in lowered:
         return "This media is unavailable from the source site."
     if "requested format is not available" in lowered:
-        return "Requested quality is not available. Try Best available or a lower quality."
+        return "YouTube did not expose downloadable formats to this server. Try Best available, or add YOUTUBE_COOKIES_TEXT in Railway Variables."
     return msg.replace("ERROR:", "").strip()[:220] or "Could not download this media. Try another public link."
 
 
@@ -1128,10 +1129,19 @@ def run_yt_dlp(url, mode, quality="1080"):
     try:
         info, ydl = extract_info_safe(url, download=True, extra_opts=ydl_opts)
     except ApiError as error:
-        if mode != "audio" and "Requested quality is not available" in error.message:
+        format_error = (
+            "Requested quality is not available" in error.message
+            or "did not expose downloadable formats" in error.message
+        )
+        if mode != "audio" and format_error:
             ydl_opts["format"] = "bv*+ba/b" if shutil.which("ffmpeg") else "b"
             fallback_note = "Downloaded best available quality from the formats exposed by the source."
-            info, ydl = extract_info_safe(url, download=True, extra_opts=ydl_opts)
+            try:
+                info, ydl = extract_info_safe(url, download=True, extra_opts=ydl_opts)
+            except ApiError as fallback_error:
+                if "automated traffic" in fallback_error.message:
+                    raise
+                raise ApiError("Could not find a downloadable YouTube format on this server. Add YOUTUBE_COOKIES_TEXT in Railway Variables and redeploy.", 400) from fallback_error
         else:
             raise
     if mode != "audio" and not fallback_note:
