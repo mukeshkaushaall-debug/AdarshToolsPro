@@ -387,6 +387,7 @@ function renderPreview(host, data) {
   const ratio = Number(data.aspect_ratio) || 1.7778;
   host.style.setProperty("--preview-ratio", ratio);
   host.classList.add("show");
+  host.classList.toggle("is-portrait", ratio < 1);
   const embedUrl = data.embed_url || getYouTubeEmbedUrl(data.webpage_url);
   if (data.preview_video_url) {
     host.classList.remove("embed-preview");
@@ -432,11 +433,12 @@ function buildFastPreviewFromUrl(url) {
     const host = parsed.hostname.replace("www.", "");
     const youtubeEmbed = getYouTubeEmbedUrl(url);
     if (youtubeEmbed) {
+      const isShort = parsed.pathname.includes("/shorts/");
       return {
         success: true,
         title: "YouTube video ready",
         uploader: "youtube.com",
-        aspect_ratio: 16 / 9,
+        aspect_ratio: isShort ? 9 / 16 : 16 / 9,
         embed_url: youtubeEmbed,
         webpage_url: url,
         preview_note: "Fast preview loaded. Start download when ready.",
