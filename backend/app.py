@@ -6,6 +6,7 @@ import sys
 import threading
 import time
 import uuid
+import base64
 import importlib
 import importlib.util
 import io
@@ -245,7 +246,7 @@ def ytdlp_base_opts():
     if cookies_file and Path(cookies_file).exists():
         opts["cookiefile"] = cookies_file
     else:
-        cookies_text = os.environ.get("YOUTUBE_COOKIES_TEXT", "").strip()
+        cookies_text = youtube_cookies_text()
         if cookies_text:
             try:
                 RUNTIME_COOKIES_FILE.write_text(cookies_text.replace("\\n", "\n") + "\n", encoding="utf-8")
@@ -255,14 +256,33 @@ def ytdlp_base_opts():
     return opts
 
 
+def youtube_cookies_text():
+    cookies_text = os.environ.get("YOUTUBE_COOKIES_TEXT", "").strip()
+    if cookies_text:
+        return cookies_text
+    cookies_b64 = os.environ.get("YOUTUBE_COOKIES_TEXT_B64", "").strip()
+    if not cookies_b64:
+        return ""
+    try:
+        return base64.b64decode(cookies_b64).decode("utf-8").strip()
+    except Exception:
+        return ""
+
+
 def youtube_cookie_status():
     cookies_file = os.environ.get("YOUTUBE_COOKIES_FILE", "")
-    cookies_text = os.environ.get("YOUTUBE_COOKIES_TEXT", "")
+    cookies_text_raw = os.environ.get("YOUTUBE_COOKIES_TEXT", "")
+    cookies_text = youtube_cookies_text()
+    cookies_b64 = os.environ.get("YOUTUBE_COOKIES_TEXT_B64", "")
+    cookies_ready = bool((cookies_file and Path(cookies_file).exists()) or cookies_text)
     return {
         "cookies_file_configured": bool(cookies_file),
         "cookies_file_exists": bool(cookies_file and Path(cookies_file).exists()),
-        "cookies_text_configured": bool(cookies_text.strip()),
+        "cookies_text_configured": bool(cookies_text_raw.strip()),
+        "cookies_text_b64_configured": bool(cookies_b64.strip()),
         "cookies_text_length": len(cookies_text),
+        "cookies_ready": cookies_ready,
+        "cookies_problem": "" if cookies_ready else "Set YOUTUBE_COOKIES_TEXT or YOUTUBE_COOKIES_TEXT_B64 in Railway backend service variables, then redeploy.",
     }
 
 
