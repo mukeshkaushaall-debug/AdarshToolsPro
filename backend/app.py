@@ -1236,15 +1236,7 @@ def seo_html(filename, subdir=None):
 @app.route("/robots.txt")
 def robots_txt():
     base = site_url()
-    body = "\n".join([
-        "User-agent: *",
-        "Allow: /",
-        "Disallow: /api/",
-        "Disallow: /download/",
-        "",
-        f"Sitemap: {base}/sitemap.xml",
-        "",
-    ])
+    body = "User-agent: *\nAllow: /\nDisallow: /api/\nDisallow: /download/\n\nSitemap: {}/sitemap.xml\n".format(base)
     return Response(body, mimetype="text/plain")
 
 
