@@ -226,7 +226,14 @@ def simplify_download_error(message):
     return msg.replace("ERROR:", "").strip()[:220] or "Could not download this media. Try another public link."
 
 
-def ytdlp_base_opts():
+def ytdlp_base_opts(client="web"):
+    """Generate base yt-dlp options with client emulation for YouTube blocking avoidance."""
+    user_agents = {
+        "web": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+        "mweb": "Mozilla/5.0 (Linux; Android 13) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Mobile Safari/537.36",
+        "ios": "Mozilla/5.0 (iPhone; CPU iPhone OS 17_4 like Mac OS X) AppleWebKit/605.1.15",
+    }
+    
     opts = {
         "quiet": True,
         "no_warnings": True,
@@ -235,15 +242,29 @@ def ytdlp_base_opts():
         "ignoreconfig": True,
         "noplaylist": True,
         "cachedir": False,
-        "retries": 3,
-        "fragment_retries": 3,
+        "retries": 5,
+        "fragment_retries": 5,
         "socket_timeout": 30,
         "nocheckcertificate": True,
         "http_headers": {
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36",
+            "User-Agent": user_agents.get(client, user_agents["web"]),
             "Accept-Language": "en-US,en;q=0.9,hi;q=0.8",
+            "Sec-Fetch-Dest": "document",
+            "Sec-Fetch-Mode": "navigate",
+            "Sec-Fetch-Site": "none",
         },
     }
+    
+    # Add client emulation arguments
+    if client in {"web", "mweb"}:
+        opts["extractor_args"] = {
+            "youtube": {
+                "player_client": [client],
+                "player_skip": ["html5", "js"],
+            }
+        }
+    
+    # Add cookies if available
     cookies_file = os.environ.get("YOUTUBE_COOKIES_FILE")
     if cookies_file and Path(cookies_file).exists():
         opts["cookiefile"] = cookies_file
@@ -255,6 +276,7 @@ def ytdlp_base_opts():
                 opts["cookiefile"] = str(RUNTIME_COOKIES_FILE)
             except OSError:
                 pass
+    
     return opts
 
 
@@ -1119,55 +1141,84 @@ def ytdlp_video_format(quality, has_ffmpeg):
 def run_yt_dlp(url, mode, quality="1080"):
     output_prefix = make_id()
     output_template = str(DOWNLOAD_DIR / f"{output_prefix}_%(title).80s.%(ext)s")
-    common_opts = {
-        **ytdlp_base_opts(),
-        "outtmpl": output_template,
-        "restrictfilenames": True,
-        "windowsfilenames": True,
-    }
-    fallback_note = ""
-    if mode == "audio":
-        require_ffmpeg()
-        ydl_opts = {
-            **common_opts,
-            "format": "bestaudio/best",
-            "postprocessors": [{
-                "key": "FFmpegExtractAudio",
-                "preferredcodec": "mp3",
-                "preferredquality": "192",
-            }],
-        }
-    else:
-        has_ffmpeg = shutil.which("ffmpeg") is not None
-        probe_info, _ = extract_info_safe(url, download=False, extra_opts={"skip_download": True})
-        format_selector, quality_note, _height = choose_available_video_format(probe_info, quality, has_ffmpeg)
-        ydl_opts = {
-            **common_opts,
-            "format": format_selector,
-        }
-        if has_ffmpeg:
-            ydl_opts["merge_output_format"] = "mp4"
+    clients = ["web", "mweb"]  # Try multiple clients
+    last_error = None
+    
+    for client_idx, client in enumerate(clients):
+        try:
+            common_opts = {
+                **ytdlp_base_opts(client=client),
+                "outtmpl": output_template,
+                "restrictfilenames": True,
+                "windowsfilenames": True,
+            }
+            fallback_note = ""
+            
+            if mode == "audio":
+                require_ffmpeg()
+                ydl_opts = {
+                    **common_opts,
+                    "format": "bestaudio/best",
+                    "postprocessors": [{
+                        "key": "FFmpegExtractAudio",
+                        "preferredcodec": "mp3",
+                        "preferredquality": "192",
+                    }],
+                }
+            else:
+                has_ffmpeg = shutil.which("ffmpeg") is not None
+                probe_info, _ = extract_info_safe(url, download=False, extra_opts={
+                    "skip_download": True,
+                    **ytdlp_base_opts(client=client),
+                })
+                format_selector, quality_note, _height = choose_available_video_format(probe_info, quality, has_ffmpeg)
+                ydl_opts = {
+                    **common_opts,
+                    "format": format_selector,
+                }
+                if has_ffmpeg:
+                    ydl_opts["merge_output_format"] = "mp4"
 
-    try:
-        info, ydl = extract_info_safe(url, download=True, extra_opts=ydl_opts)
-    except ApiError as error:
-        format_error = (
-            "Requested quality is not available" in error.message
-            or "did not expose downloadable formats" in error.message
-        )
-        if mode != "audio" and format_error:
-            ydl_opts["format"] = "bv*+ba/b" if shutil.which("ffmpeg") else "b"
-            fallback_note = "Downloaded best available quality from the formats exposed by the source."
             try:
                 info, ydl = extract_info_safe(url, download=True, extra_opts=ydl_opts)
-            except ApiError as fallback_error:
-                if "automated traffic" in fallback_error.message:
+                break  # Success with this client
+            except ApiError as error:
+                format_error = (
+                    "Requested quality is not available" in error.message
+                    or "did not expose downloadable formats" in error.message
+                )
+                if mode != "audio" and format_error and client_idx < len(clients) - 1:
+                    # Try next client
+                    last_error = error
+                    continue
+                elif mode != "audio" and format_error:
+                    # Last client, try best format fallback
+                    ydl_opts["format"] = "bv*+ba/b" if shutil.which("ffmpeg") else "b"
+                    fallback_note = "Downloaded best available quality from the formats exposed by the source."
+                    try:
+                        info, ydl = extract_info_safe(url, download=True, extra_opts=ydl_opts)
+                        break
+                    except ApiError as fallback_error:
+                        last_error = fallback_error
+                        if client_idx < len(clients) - 1:
+                            continue
+                        if "automated traffic" in str(fallback_error.message).lower():
+                            raise ApiError("YouTube is blocking this server. Add YOUTUBE_COOKIES_TEXT in Railway Variables for persistent access, or try again in a few minutes.", 429) from fallback_error
+                        raise
+                else:
+                    last_error = error
+                    if client_idx < len(clients) - 1:
+                        continue
                     raise
-                raise ApiError("Could not find a downloadable YouTube format on this server. Add YOUTUBE_COOKIES_TEXT in Railway Variables and redeploy.", 400) from fallback_error
-        else:
+        except Exception as e:
+            last_error = e
+            if client_idx < len(clients) - 1:
+                continue
             raise
+    
     if mode != "audio" and not fallback_note:
         fallback_note = quality_note
+    
     after = [p for p in DOWNLOAD_DIR.glob(f"{output_prefix}_*") if p.is_file()]
     if not after:
         requested = ydl.prepare_filename(info)
