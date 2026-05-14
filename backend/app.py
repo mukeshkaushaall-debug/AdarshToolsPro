@@ -95,22 +95,22 @@ RUNTIME_COOKIES_FILE = Path(os.environ.get("TMPDIR", BASE_DIR)) / "youtube_cooki
 YOUTUBE_COOKIES_HELP = "YouTube is blocking this server as automated traffic. Add YOUTUBE_COOKIES_TEXT in Railway Variables, then redeploy."
 SEO_PAGES = [
     ("/", "daily", "1.0"),
-    ("/pages/youtube.html", "weekly", "0.9"),
-    ("/pages/pinterest.html", "weekly", "0.9"),
-    ("/pages/instagram.html", "weekly", "0.9"),
-    ("/pages/thumbnail.html", "weekly", "0.9"),
-    ("/pages/qr.html", "weekly", "0.9"),
-    ("/pages/pdf-to-image.html", "weekly", "0.8"),
-    ("/pages/image-to-pdf.html", "weekly", "0.8"),
-    ("/pages/compress.html", "weekly", "0.9"),
-    ("/pages/removebg.html", "weekly", "0.9"),
-    ("/pages/upscale.html", "weekly", "0.8"),
-    ("/pages/enhance.html", "weekly", "0.8"),
-    ("/pages/blur.html", "weekly", "0.8"),
-    ("/pages/convert.html", "weekly", "0.8"),
-    ("/pages/watermark.html", "weekly", "0.8"),
-    ("/pages/audio.html", "weekly", "0.8"),
-    ("/pages/policy.html", "monthly", "0.4"),
+    ("/youtube", "weekly", "0.9"),
+    ("/pinterest", "weekly", "0.9"),
+    ("/instagram", "weekly", "0.9"),
+    ("/thumbnail", "weekly", "0.9"),
+    ("/qr", "weekly", "0.9"),
+    ("/pdf-to-image", "weekly", "0.8"),
+    ("/image-to-pdf", "weekly", "0.8"),
+    ("/compress", "weekly", "0.9"),
+    ("/removebg", "weekly", "0.9"),
+    ("/upscale", "weekly", "0.8"),
+    ("/enhance", "weekly", "0.8"),
+    ("/blur", "weekly", "0.8"),
+    ("/convert", "weekly", "0.8"),
+    ("/watermark", "weekly", "0.8"),
+    ("/audio", "weekly", "0.8"),
+    ("/policy", "monthly", "0.4"),
 ]
 
 app = Flask(__name__, static_folder=str(FRONTEND_DIR), static_url_path="")
@@ -1280,6 +1280,72 @@ def youtube_status():
 @app.route("/favicon.ico")
 def favicon():
     return "", 204
+
+
+# Clean URL routes for SEO-friendly tool pages
+@app.route("/youtube")
+def tool_youtube():
+    return seo_html("youtube.html", "pages")
+
+@app.route("/pinterest")
+def tool_pinterest():
+    return seo_html("pinterest.html", "pages")
+
+@app.route("/instagram")
+def tool_instagram():
+    return seo_html("instagram.html", "pages")
+
+@app.route("/thumbnail")
+def tool_thumbnail():
+    return seo_html("thumbnail.html", "pages")
+
+@app.route("/qr")
+def tool_qr():
+    return seo_html("qr.html", "pages")
+
+@app.route("/pdf-to-image")
+def tool_pdf_to_image():
+    return seo_html("pdf-to-image.html", "pages")
+
+@app.route("/image-to-pdf")
+def tool_image_to_pdf():
+    return seo_html("image-to-pdf.html", "pages")
+
+@app.route("/compress")
+def tool_compress():
+    return seo_html("compress.html", "pages")
+
+@app.route("/removebg")
+def tool_removebg():
+    return seo_html("removebg.html", "pages")
+
+@app.route("/upscale")
+def tool_upscale():
+    return seo_html("upscale.html", "pages")
+
+@app.route("/enhance")
+def tool_enhance():
+    return seo_html("enhance.html", "pages")
+
+@app.route("/blur")
+def tool_blur():
+    return seo_html("blur.html", "pages")
+
+@app.route("/convert")
+def tool_convert():
+    return seo_html("convert.html", "pages")
+
+@app.route("/watermark")
+def tool_watermark():
+    return seo_html("watermark.html", "pages")
+
+@app.route("/audio")
+def tool_audio():
+    return seo_html("audio.html", "pages")
+
+@app.route("/policy")
+def tool_policy():
+    return seo_html("policy.html", "pages")
 
 
 @app.route("/pages/<path:filename>")

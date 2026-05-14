@@ -1,21 +1,21 @@
 const API_BASE = window.location.protocol === "file:" ? "http://127.0.0.1:5000" : "";
 
 const tools = [
-  ["youtube", "YouTube Video Downloader", "Download HD videos up to 4K when available.", "youtube", "linear-gradient(135deg,#ff0033,#ff7a59)", "pages/youtube.html"],
-  ["pinterest", "Pinterest Downloader", "Download public Pinterest videos and media.", "pinterest", "linear-gradient(135deg,#e60023,#ff758f)", "pages/pinterest.html"],
-  ["thumbnail", "YouTube Thumbnail Downloader", "Download high-resolution YouTube thumbnails.", "youtube", "linear-gradient(135deg,#ff0033,#ff7a59)", "pages/thumbnail.html"],
-  ["qr", "QR Code Generator", "Create crisp QR codes for URLs, payments, and profiles.", "qr", "linear-gradient(135deg,#111827,#f59e0b)", "pages/qr.html"],
-  ["pdfimage", "PDF To Image", "Export PDF pages as high-quality PNG images.", "pdf", "linear-gradient(135deg,#7c3aed,#f59e0b)", "pages/pdf-to-image.html"],
-  ["instagram", "Instagram Reel Downloader", "Save reels and posts from public Instagram URLs.", "instagram", "linear-gradient(135deg,#833ab4,#fd1d1d,#fcb045)", "pages/instagram.html"],
-  ["upscale", "Image Upscale", "Enhance images with crisp 2x to 4x resizing.", "upscale", "linear-gradient(135deg,#2563eb,#06b6d4)", "pages/upscale.html"],
-  ["enhance", "AI Image Enhancer", "Premium color, sharpness, light, and clarity enhancement.", "enhance", "linear-gradient(135deg,#0ea5e9,#8b5cf6)", "pages/enhance.html"],
-  ["blur", "Blur Background", "DSLR-style portrait blur effects.", "blur", "linear-gradient(135deg,#111827,#14b8a6)", "pages/blur.html"],
-  ["compress", "Image Compress", "Reduce image size while keeping clean quality.", "compress", "linear-gradient(135deg,#10b981,#22c55e)", "pages/compress.html"],
-  ["removebg", "Remove Background", "Create transparent PNG cutouts from images.", "removebg", "linear-gradient(135deg,#7c3aed,#ec4899)", "pages/removebg.html"],
-  ["audio", "Video To MP3", "Convert supported public videos to MP3 audio.", "audio", "linear-gradient(135deg,#0f766e,#06b6d4)", "pages/audio.html"],
-  ["convert", "Image Converter", "Convert PNG, JPG, and WEBP without quality damage.", "convert", "linear-gradient(135deg,#14b8a6,#2563eb)", "pages/convert.html"],
-  ["imagepdf", "Image To PDF", "Convert JPG, PNG, and WEBP images into one clean PDF.", "pdf", "linear-gradient(135deg,#ef4444,#f97316)", "pages/image-to-pdf.html"],
-  ["invoice", "Invoice Generator", "Create print-ready business invoices with totals and tax.", "invoice", "linear-gradient(135deg,#0f766e,#f59e0b)", "pages/invoice.html"],
+  ["youtube", "YouTube Video Downloader", "Download HD videos up to 4K when available.", "youtube", "linear-gradient(135deg,#ff0033,#ff7a59)", "/youtube"],
+  ["pinterest", "Pinterest Downloader", "Download public Pinterest videos and media.", "pinterest", "linear-gradient(135deg,#e60023,#ff758f)", "/pinterest"],
+  ["thumbnail", "YouTube Thumbnail Downloader", "Download high-resolution YouTube thumbnails.", "youtube", "linear-gradient(135deg,#ff0033,#ff7a59)", "/thumbnail"],
+  ["qr", "QR Code Generator", "Create crisp QR codes for URLs, payments, and profiles.", "qr", "linear-gradient(135deg,#111827,#f59e0b)", "/qr"],
+  ["pdfimage", "PDF To Image", "Export PDF pages as high-quality PNG images.", "pdf", "linear-gradient(135deg,#7c3aed,#f59e0b)", "/pdf-to-image"],
+  ["instagram", "Instagram Reel Downloader", "Save reels and posts from public Instagram URLs.", "instagram", "linear-gradient(135deg,#833ab4,#fd1d1d,#fcb045)", "/instagram"],
+  ["upscale", "Image Upscale", "Enhance images with crisp 2x to 4x resizing.", "upscale", "linear-gradient(135deg,#2563eb,#06b6d4)", "/upscale"],
+  ["enhance", "AI Image Enhancer", "Premium color, sharpness, light, and clarity enhancement.", "enhance", "linear-gradient(135deg,#0ea5e9,#8b5cf6)", "/enhance"],
+  ["blur", "Blur Background", "DSLR-style portrait blur effects.", "blur", "linear-gradient(135deg,#111827,#14b8a6)", "/blur"],
+  ["compress", "Image Compress", "Reduce image size while keeping clean quality.", "compress", "linear-gradient(135deg,#10b981,#22c55e)", "/compress"],
+  ["removebg", "Remove Background", "Create transparent PNG cutouts from images.", "removebg", "linear-gradient(135deg,#7c3aed,#ec4899)", "/removebg"],
+  ["audio", "Video To MP3", "Convert supported public videos to MP3 audio.", "audio", "linear-gradient(135deg,#0f766e,#06b6d4)", "/audio"],
+  ["convert", "Image Converter", "Convert PNG, JPG, and WEBP without quality damage.", "convert", "linear-gradient(135deg,#14b8a6,#2563eb)", "/convert"],
+  ["imagepdf", "Image To PDF", "Convert JPG, PNG, and WEBP images into one clean PDF.", "pdf", "linear-gradient(135deg,#ef4444,#f97316)", "/image-to-pdf"],
+  ["invoice", "Invoice Generator", "Create print-ready business invoices with totals and tax.", "invoice", "linear-gradient(135deg,#0f766e,#f59e0b)", "/invoice"],
 ];
 
 const comingSoonTools = new Set(["invoice"]);
