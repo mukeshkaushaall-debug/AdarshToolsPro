@@ -227,11 +227,29 @@ def simplify_download_error(message):
 
 
 def ytdlp_base_opts(client="web"):
-    """Generate base yt-dlp options with client emulation for YouTube blocking avoidance."""
+    """Generate base yt-dlp options with advanced client emulation for YouTube blocking avoidance."""
     user_agents = {
-        "web": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
-        "mweb": "Mozilla/5.0 (Linux; Android 13) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Mobile Safari/537.36",
-        "ios": "Mozilla/5.0 (iPhone; CPU iPhone OS 17_4 like Mac OS X) AppleWebKit/605.1.15",
+        "web": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36",
+        "mweb": "Mozilla/5.0 (Linux; Android 14) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Mobile Safari/537.36",
+        "tv": "Mozilla/5.0 (CrKey armv7l 1.54.192706) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36",
+    }
+    
+    # Comprehensive HTTP headers to mimic real browser
+    http_headers = {
+        "User-Agent": user_agents.get(client, user_agents["web"]),
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+        "Accept-Language": "en-US,en;q=0.9,hi;q=0.8",
+        "Accept-Encoding": "gzip, deflate",
+        "DNT": "1",
+        "Connection": "keep-alive",
+        "Upgrade-Insecure-Requests": "1",
+        "Sec-Fetch-Dest": "document",
+        "Sec-Fetch-Mode": "navigate",
+        "Sec-Fetch-Site": "none",
+        "Sec-Fetch-User": "?1",
+        "Sec-Ch-Ua": '"Not A(Brand";v="99", "Google Chrome";v="125", "Chromium";v="125"',
+        "Sec-Ch-Ua-Mobile": "?1" if client == "mweb" else "?0",
+        "Sec-Ch-Ua-Platform": '"Android"' if client == "mweb" else '"Windows"',
     }
     
     opts = {
@@ -242,27 +260,43 @@ def ytdlp_base_opts(client="web"):
         "ignoreconfig": True,
         "noplaylist": True,
         "cachedir": False,
-        "retries": 5,
-        "fragment_retries": 5,
+        "retries": 10,
+        "fragment_retries": 10,
         "socket_timeout": 30,
+        "skip_unavailable_fragments": True,
         "nocheckcertificate": True,
-        "http_headers": {
-            "User-Agent": user_agents.get(client, user_agents["web"]),
-            "Accept-Language": "en-US,en;q=0.9,hi;q=0.8",
-            "Sec-Fetch-Dest": "document",
-            "Sec-Fetch-Mode": "navigate",
-            "Sec-Fetch-Site": "none",
-        },
+        "http_headers": http_headers,
     }
     
-    # Add client emulation arguments
-    if client in {"web", "mweb"}:
+    # Add client emulation arguments with multiple strategies
+    if client == "web":
         opts["extractor_args"] = {
             "youtube": {
-                "player_client": [client],
-                "player_skip": ["html5", "js"],
+                "player_client": ["web"],
+                "player_skip": ["dash", "configs"],
+                "lang": ["en"],
             }
         }
+    elif client == "mweb":
+        opts["extractor_args"] = {
+            "youtube": {
+                "player_client": ["mweb"],
+                "player_skip": ["dash", "configs"],
+                "lang": ["en"],
+            }
+        }
+    elif client == "tv":
+        opts["extractor_args"] = {
+            "youtube": {
+                "player_client": ["tv_embedded"],
+                "player_skip": ["dash", "configs"],
+            }
+        }
+    
+    # Add request delay to avoid rate limiting
+    opts["postprocessor_args"] = {
+        "ffmpeg_o": ["-hide_banner", "-loglevel", "error"]
+    }
     
     # Add cookies if available
     cookies_file = os.environ.get("YOUTUBE_COOKIES_FILE")
@@ -287,8 +321,6 @@ def ytdlp_base_opts(client="web"):
                 if cookies_clean.startswith("#") or ".youtube.com" in cookies_clean or ".google.com" in cookies_clean:
                     RUNTIME_COOKIES_FILE.write_text(cookies_clean + "\n", encoding="utf-8")
                     opts["cookiefile"] = str(RUNTIME_COOKIES_FILE)
-                else:
-                    pass  # Invalid format, skip
             except (OSError, Exception):
                 pass
     
@@ -1156,7 +1188,7 @@ def ytdlp_video_format(quality, has_ffmpeg):
 def run_yt_dlp(url, mode, quality="1080"):
     output_prefix = make_id()
     output_template = str(DOWNLOAD_DIR / f"{output_prefix}_%(title).80s.%(ext)s")
-    clients = ["web", "mweb"]  # Try multiple clients
+    clients = ["web", "mweb", "tv"]  # Try multiple clients - TV embedded often bypasses blocking
     last_error = None
     
     for client_idx, client in enumerate(clients):
@@ -1203,8 +1235,9 @@ def run_yt_dlp(url, mode, quality="1080"):
                     or "did not expose downloadable formats" in error.message
                 )
                 if mode != "audio" and format_error and client_idx < len(clients) - 1:
-                    # Try next client
+                    # Try next client with a small delay to avoid rate limiting
                     last_error = error
+                    time.sleep(1)
                     continue
                 elif mode != "audio" and format_error:
                     # Last client, try best format fallback
@@ -1216,6 +1249,7 @@ def run_yt_dlp(url, mode, quality="1080"):
                     except ApiError as fallback_error:
                         last_error = fallback_error
                         if client_idx < len(clients) - 1:
+                            time.sleep(1)
                             continue
                         if "automated traffic" in str(fallback_error.message).lower():
                             cookies_status = "❌ No valid cookies found" if not youtube_cookies_text() else "⚠️ Cookies added but still blocked (may be expired)"
@@ -1224,11 +1258,13 @@ def run_yt_dlp(url, mode, quality="1080"):
                 else:
                     last_error = error
                     if client_idx < len(clients) - 1:
+                        time.sleep(1)
                         continue
                     raise
         except Exception as e:
             last_error = e
             if client_idx < len(clients) - 1:
+                time.sleep(1)
                 continue
             raise
     
