@@ -3,4 +3,4 @@ Allow: /
 Disallow: /api/
 Disallow: /download/
 
-Sitemap: https://thugtools.xyz/sitemap.xml
+Sitemap: https://www.thugtools.xyz/sitemap.xml
