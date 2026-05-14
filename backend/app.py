@@ -272,9 +272,24 @@ def ytdlp_base_opts(client="web"):
         cookies_text = youtube_cookies_text()
         if cookies_text:
             try:
-                RUNTIME_COOKIES_FILE.write_text(cookies_text.replace("\\n", "\n") + "\n", encoding="utf-8")
-                opts["cookiefile"] = str(RUNTIME_COOKIES_FILE)
-            except OSError:
+                # Handle different line break formats
+                cookies_clean = cookies_text
+                if "\\n" in cookies_clean:
+                    cookies_clean = cookies_clean.replace("\\n", "\n")
+                elif "\\r\\n" in cookies_clean:
+                    cookies_clean = cookies_clean.replace("\\r\\n", "\n")
+                
+                # Ensure proper line breaks and clean format
+                lines = [line.strip() for line in cookies_clean.split("\n") if line.strip()]
+                cookies_clean = "\n".join(lines)
+                
+                # Validate format
+                if cookies_clean.startswith("#") or ".youtube.com" in cookies_clean or ".google.com" in cookies_clean:
+                    RUNTIME_COOKIES_FILE.write_text(cookies_clean + "\n", encoding="utf-8")
+                    opts["cookiefile"] = str(RUNTIME_COOKIES_FILE)
+                else:
+                    pass  # Invalid format, skip
+            except (OSError, Exception):
                 pass
     
     return opts
@@ -1203,7 +1218,8 @@ def run_yt_dlp(url, mode, quality="1080"):
                         if client_idx < len(clients) - 1:
                             continue
                         if "automated traffic" in str(fallback_error.message).lower():
-                            raise ApiError("YouTube is blocking this server. Add YOUTUBE_COOKIES_TEXT in Railway Variables for persistent access, or try again in a few minutes.", 429) from fallback_error
+                            cookies_status = "❌ No valid cookies found" if not youtube_cookies_text() else "⚠️ Cookies added but still blocked (may be expired)"
+                            raise ApiError(f"YouTube is blocking automated downloads. {cookies_status}. Solutions: 1) Add fresh YOUTUBE_COOKIES_TEXT to Railway Variables, 2) Wait 30 minutes and try again, 3) Try a different video.", 429) from fallback_error
                         raise
                 else:
                     last_error = error
