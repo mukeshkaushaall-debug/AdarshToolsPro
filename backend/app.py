@@ -760,25 +760,19 @@ def pick_preview_video_url(formats):
 
 
 def postprocess_cutout(path, feather=2, background="transparent", hd_mode=False):
-    """Advanced cutout post-processing with quality enhancements."""
+    """Minimal cutout post-processing to preserve content."""
     with Image.open(path) as img:
         rgba = img.convert("RGBA")
         
-        # Extract original RGB and alpha
-        rgb = Image.new("RGB", rgba.size, (255, 255, 255))
-        rgb.paste(rgba, mask=rgba.split()[3])
+        # Get alpha channel
         alpha_channel = rgba.split()[3]
         
-        # Apply advanced alpha refinement
-        refined_alpha = refine_cutout_alpha_advanced(
-            alpha_channel, 
-            rgb, 
-            feather=feather, 
-            hd_mode=hd_mode
-        )
+        # Apply light feathering only
+        if feather > 0:
+            alpha_channel = alpha_channel.filter(ImageFilter.GaussianBlur(min(feather, 4) * 0.3))
         
-        # Create final RGBA with refined alpha
-        rgba.putalpha(refined_alpha)
+        # Apply refined alpha
+        rgba.putalpha(alpha_channel)
         
         # Apply background if needed
         if background != "transparent":
@@ -1048,18 +1042,17 @@ def apply_hd_refinement(alpha_array, rgb_array):
 
 
 def finalize_alpha_channel(alpha_array):
-    """Final processing to prepare alpha channel."""
+    """Final processing to prepare alpha channel - keep it simple to preserve content."""
     import numpy as np
     
     alpha_norm = alpha_array / 255.0 if alpha_array.max() > 1 else alpha_array
     
-    # Apply final threshold with curve adjustment for better blacks/whites
-    # Use S-curve for smoother transitions
-    curve = np.array([0 if x < 0.1 else 1 if x > 0.9 else (0.5 * np.sin((x - 0.5) * np.pi) + 0.5) for x in alpha_norm.flat])
-    result = curve.reshape(alpha_norm.shape)
+    # Apply gentle Gaussian blur for smoothing without destroying content
+    from scipy import ndimage
+    blurred = ndimage.gaussian_filter(alpha_norm, sigma=0.3)
     
-    # Slight boost to overall clarity
-    result = result * 1.02
+    # Gentle threshold to clean up very noisy pixels only
+    result = np.where(blurred < 0.02, 0, blurred)
     
     return np.clip(result, 0, 1)
 
@@ -1116,10 +1109,10 @@ def remove_background_ai(source, out, feather=1, background="transparent", mode=
     session = get_rembg_session(model_name)
     kwargs = {"session": session, "post_process_mask": True} if session is not None else {"post_process_mask": True}
     
-    # Enable alpha_matting for better edge quality
+    # Enable alpha_matting with balanced parameters
     kwargs["alpha_matting"] = True
-    kwargs["alpha_matting_foreground_threshold"] = 240
-    kwargs["alpha_matting_background_threshold"] = 10
+    kwargs["alpha_matting_foreground_threshold"] = 150
+    kwargs["alpha_matting_background_threshold"] = 5
     
     result = remove_background(working, **kwargs)
     
@@ -1143,7 +1136,7 @@ def remove_background_ai(source, out, feather=1, background="transparent", mode=
     if not cutout_has_useful_alpha(out):
         raise ApiError("AI cutout returned an empty or invalid mask.", 500)
     
-    # Apply advanced post-processing with HD mode
+    # Apply basic post-processing with minimal feathering
     postprocess_cutout(out, feather=feather, background=background, hd_mode=hd_mode)
 
 
