@@ -169,7 +169,7 @@ async function fetchWithTimeout(url, options = {}, timeoutMs = 90000) {
     if (error.name === "AbortError") {
       const isRemoveBg = url.includes("/api/image/removebg");
       const message = isRemoveBg 
-        ? "Processing taking too long. The AI model may still be downloading. Please try again in a moment."
+        ? "AI background removal is taking longer than expected. Try a smaller image or retry in a moment."
         : "Request timed out. Please try a smaller file or restart the server.";
       throw new Error(message);
     }
@@ -249,7 +249,7 @@ async function postJSON(url, body) {
 }
 
 async function postForm(url, formData) {
-  const timeoutMs = url.includes("/api/image/removebg") ? 180000 : 90000;
+  const timeoutMs = url.includes("/api/image/removebg") ? 300000 : 90000;
   const res = await fetchWithTimeout(API_BASE + url, { method: "POST", body: formData }, timeoutMs);
   return parseJSONResponse(res);
 }

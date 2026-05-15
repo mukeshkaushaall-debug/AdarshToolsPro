@@ -4,7 +4,8 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     PIP_NO_CACHE_DIR=1 \
     U2NET_HOME=/app/backend/models/rembg \
-    REMBG_MODEL=isnet-general-use \
+    REMBG_MODEL=u2net \
+    OMP_NUM_THREADS=1 \
     PORT=5000
 
 WORKDIR /app
@@ -18,8 +19,7 @@ RUN pip install --upgrade pip \
     && pip install -r /app/backend/requirements.txt
 
 RUN mkdir -p /app/backend/models/rembg \
-    && python -c "from rembg import new_session; new_session('isnet-general-use')" \
-    || true
+    && python -c "from rembg import new_session; [new_session(model) for model in ('u2net', 'u2net_human_seg', 'isnet-general-use')]"
 
 COPY . /app
 

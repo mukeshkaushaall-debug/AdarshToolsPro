@@ -11,7 +11,6 @@ import importlib
 import importlib.util
 import io
 import json
-from collections import deque
 import zipfile
 from html import escape, unescape
 from pathlib import Path
@@ -21,7 +20,7 @@ import requests
 import certifi
 from flask import Flask, Response, jsonify, request, send_file, send_from_directory, redirect
 from flask_cors import CORS
-from PIL import Image, ImageChops, ImageDraw, ImageEnhance, ImageFilter, ImageFont, ImageOps
+from PIL import Image, ImageDraw, ImageEnhance, ImageFilter, ImageFont, ImageOps
 from werkzeug.utils import secure_filename
 from werkzeug.exceptions import HTTPException
 from werkzeug.middleware.proxy_fix import ProxyFix
@@ -128,7 +127,8 @@ SEO_PAGES = [
 SITE_NAME = "ThugTools"
 DEFAULT_IMAGE = "/assets/site-logo.png"
 SITE_DESCRIPTION = "ThugTools is built for creators who do not like waiting."
-REMBG_MODEL_DEFAULT = os.environ.get("REMBG_MODEL", "isnet-general-use").strip() or "isnet-general-use"
+REMBG_MODEL_DEFAULT = os.environ.get("REMBG_MODEL", "u2net").strip() or "u2net"
+REMBG_MAX_SIDE = int(os.environ.get("REMBG_MAX_SIDE", "1800"))
 _rembg_sessions = {}
 _rembg_session_lock = threading.Lock()
 
@@ -797,161 +797,6 @@ def cutout_has_useful_alpha(path):
         return False
 
 
-def remove_background_fallback(source, out, feather=2, background="transparent", mode="pro"):
-    with Image.open(source) as img:
-        rgba = ImageOps.exif_transpose(img).convert("RGBA")
-        mask = smart_background_mask(rgba, mode=mode)
-        rgba.putalpha(mask)
-        rgba.save(out, "PNG", optimize=True)
-    postprocess_cutout(out, feather=feather, background=background)
-
-
-def smart_background_mask(rgba, mode="pro"):
-    original_size = rgba.size
-    rgb = rgba.convert("RGB")
-    max_side = 1100 if mode == "pro" else 760
-    scale = min(1, max_side / max(rgb.size))
-    work = rgb.resize((max(1, int(rgb.width * scale)), max(1, int(rgb.height * scale))), Image.Resampling.LANCZOS) if scale < 1 else rgb
-    try:
-        import numpy as np
-    except Exception:
-        return simple_background_mask(work).resize(original_size, Image.Resampling.LANCZOS)
-
-    arr = np.asarray(work).astype(np.float32)
-    height, width = arr.shape[:2]
-    band = max(2, min(width, height) // 18)
-    border = np.concatenate([
-        arr[:band, :, :].reshape(-1, 3),
-        arr[-band:, :, :].reshape(-1, 3),
-        arr[:, :band, :].reshape(-1, 3),
-        arr[:, -band:, :].reshape(-1, 3),
-    ])
-    centers = background_palette(border)
-    distances = np.min([np.sqrt(np.sum((arr - center) ** 2, axis=2)) for center in centers], axis=0)
-    border_distances = np.concatenate([
-        distances[:band, :].ravel(),
-        distances[-band:, :].ravel(),
-        distances[:, :band].ravel(),
-        distances[:, -band:].ravel(),
-    ])
-    threshold = float(np.percentile(border_distances, 92) + (12 if mode == "pro" else 18))
-    threshold = max(20, min(82 if mode == "pro" else 96, threshold))
-    background_candidate = distances <= threshold
-    reached = flood_background_from_edges(background_candidate)
-    foreground = ~reached
-    foreground = keep_foreground_components(foreground)
-    mask = Image.fromarray((foreground.astype("uint8") * 255), "L")
-    mask = mask.filter(ImageFilter.MedianFilter(3))
-    mask = mask.filter(ImageFilter.MaxFilter(5)).filter(ImageFilter.MinFilter(3))
-    if mode == "pro":
-        mask = mask.filter(ImageFilter.GaussianBlur(0.55))
-    return mask.resize(original_size, Image.Resampling.LANCZOS)
-
-
-def background_palette(border_pixels):
-    try:
-        import numpy as np
-        pixels = np.asarray(border_pixels, dtype=np.uint8)
-        if len(pixels) > 12000:
-            pixels = pixels[::max(1, len(pixels) // 12000)]
-        strip = Image.fromarray(pixels.reshape(1, len(pixels), 3), "RGB")
-        palette = strip.quantize(colors=8, method=Image.Quantize.MEDIANCUT).convert("RGB")
-        colors = palette.getcolors(maxcolors=16) or []
-        centers = [color for count, color in sorted(colors, reverse=True)[:8]]
-        if not centers:
-            centers = [tuple(int(value) for value in np.median(pixels, axis=0))]
-        return [np.array(color, dtype=np.float32) for color in centers]
-    except Exception:
-        return [(235, 235, 235)]
-
-
-def flood_background_from_edges(background_candidate):
-    try:
-        import numpy as np
-    except Exception:
-        return background_candidate
-    height, width = background_candidate.shape
-    reached = np.zeros((height, width), dtype=bool)
-    queue = deque()
-    for x in range(width):
-        if background_candidate[0, x]:
-            reached[0, x] = True
-            queue.append((0, x))
-        if background_candidate[height - 1, x]:
-            reached[height - 1, x] = True
-            queue.append((height - 1, x))
-    for y in range(height):
-        if background_candidate[y, 0] and not reached[y, 0]:
-            reached[y, 0] = True
-            queue.append((y, 0))
-        if background_candidate[y, width - 1] and not reached[y, width - 1]:
-            reached[y, width - 1] = True
-            queue.append((y, width - 1))
-    while queue:
-        y, x = queue.popleft()
-        for ny, nx in ((y - 1, x), (y + 1, x), (y, x - 1), (y, x + 1)):
-            if 0 <= ny < height and 0 <= nx < width and background_candidate[ny, nx] and not reached[ny, nx]:
-                reached[ny, nx] = True
-                queue.append((ny, nx))
-    return reached
-
-
-def keep_foreground_components(foreground):
-    try:
-        import numpy as np
-    except Exception:
-        return foreground
-    height, width = foreground.shape
-    visited = np.zeros((height, width), dtype=bool)
-    kept = np.zeros((height, width), dtype=bool)
-    minimum_area = max(80, int(width * height * 0.0025))
-    center_y, center_x = height / 2, width / 2
-    components = []
-    for start_y, start_x in zip(*np.where(foreground & ~visited)):
-        queue = deque([(int(start_y), int(start_x))])
-        visited[start_y, start_x] = True
-        pixels = []
-        while queue:
-            y, x = queue.popleft()
-            pixels.append((y, x))
-            for ny, nx in ((y - 1, x), (y + 1, x), (y, x - 1), (y, x + 1)):
-                if 0 <= ny < height and 0 <= nx < width and foreground[ny, nx] and not visited[ny, nx]:
-                    visited[ny, nx] = True
-                    queue.append((ny, nx))
-        area = len(pixels)
-        if area < minimum_area:
-            continue
-        ys = [p[0] for p in pixels]
-        xs = [p[1] for p in pixels]
-        cy = sum(ys) / area
-        cx = sum(xs) / area
-        center_score = 1 - min(1, (((cy - center_y) / max(1, height)) ** 2 + ((cx - center_x) / max(1, width)) ** 2) ** 0.5 * 2)
-        components.append((area * (1 + center_score), pixels))
-    components.sort(reverse=True, key=lambda item: item[0])
-    for _, pixels in components[:4]:
-        for y, x in pixels:
-            kept[y, x] = True
-    return kept if components else foreground
-
-
-def simple_background_mask(rgb):
-    small = rgb.resize((1, 1), Image.Resampling.BOX)
-    bg = Image.new("RGB", rgb.size, small.getpixel((0, 0)))
-    diff = ImageChops.difference(rgb, bg).convert("L")
-    mask = diff.point(lambda p: 255 if p > 24 else 0)
-    mask = ImageOps.expand(mask, border=8, fill=0).filter(ImageFilter.GaussianBlur(5)).crop((8, 8, 8 + rgb.width, 8 + rgb.height))
-    return mask.filter(ImageFilter.MaxFilter(7)).filter(ImageFilter.GaussianBlur(2))
-
-
-def removebg_ai_disabled():
-    return os.environ.get("THUGTOOLS_DISABLE_REMBG", "").strip().lower() in {"1", "true", "yes", "on"}
-
-
-def should_use_rembg(mode="ai"):
-    force_ai = os.environ.get("THUGTOOLS_USE_REMBG", "").strip().lower() in {"1", "true", "yes", "on"}
-    return remove_background is not None and not removebg_ai_disabled() and (force_ai or mode in {"ai", "portrait", "product"})
-
-
 def rembg_model_for_mode(mode):
     if mode == "portrait":
         return os.environ.get("REMBG_PORTRAIT_MODEL", "u2net_human_seg").strip() or "u2net_human_seg"
@@ -971,23 +816,38 @@ def get_rembg_session(model_name):
 
 
 def remove_background_ai(source, out, feather=1, background="transparent", mode="ai"):
-    data = source.read_bytes()
+    if remove_background is None:
+        raise ApiError(f"Remove background AI dependency is unavailable: {_rembg_import_error}", 500)
+    with Image.open(source) as img:
+        original = ImageOps.exif_transpose(img).convert("RGBA")
+    working = original.copy()
+    if max(working.size) > REMBG_MAX_SIDE:
+        working.thumbnail((REMBG_MAX_SIDE, REMBG_MAX_SIDE), Image.Resampling.LANCZOS)
     model_name = rembg_model_for_mode(mode)
     session = get_rembg_session(model_name)
-    kwargs = {
-        "alpha_matting": True,
-        "alpha_matting_foreground_threshold": 240,
-        "alpha_matting_background_threshold": 10,
-        "alpha_matting_erode_size": 6 if mode == "portrait" else 8,
-    }
-    if session is not None:
-        kwargs["session"] = session
+    kwargs = {"session": session, "post_process_mask": True} if session is not None else {"post_process_mask": True}
     try:
-        result = remove_background(data, **kwargs)
-    except TypeError:
-        kwargs.pop("session", None)
-        result = remove_background(data, **kwargs)
-    out.write_bytes(result)
+        result = remove_background(
+            working,
+            **kwargs,
+            alpha_matting=True,
+            alpha_matting_foreground_threshold=240,
+            alpha_matting_background_threshold=20,
+            alpha_matting_erode_size=8,
+        )
+    except Exception as alpha_error:
+        app.logger.warning(f"alpha matting failed; retrying AI mask without matting: {str(alpha_error)[:140]}")
+        result = remove_background(working, **kwargs)
+    if isinstance(result, (bytes, bytearray)):
+        with Image.open(io.BytesIO(result)) as result_img:
+            cutout = result_img.convert("RGBA")
+    else:
+        cutout = result.convert("RGBA")
+    alpha = cutout.getchannel("A")
+    if alpha.size != original.size:
+        alpha = alpha.resize(original.size, Image.Resampling.LANCZOS)
+    original.putalpha(alpha)
+    original.save(out, "PNG", optimize=True)
     if not cutout_has_useful_alpha(out):
         raise ApiError("AI cutout returned an empty or invalid mask.", 500)
     postprocess_cutout(out, feather=feather, background=background)
@@ -2433,22 +2293,11 @@ def image_removebg():
         feather = max(0, min(feather, 8))
         background = request.form.get("background", "transparent")
         mode = request.form.get("mode", "ai")
-        if mode not in {"ai", "portrait", "product", "pro", "fast"}:
+        if mode not in {"ai", "portrait", "product"}:
             mode = "ai"
-        if should_use_rembg(mode):
-            try:
-                app.logger.info(f"Processing AI removebg for {source.name}, model={rembg_model_for_mode(mode)}, file size={source.stat().st_size} bytes")
-                remove_background_ai(source, out, feather=feather, background=background, mode=mode)
-                app.logger.info(f"RemoveBG succeeded: {out.name}")
-            except Exception as e:
-                app.logger.exception(f"rembg failed ({str(e)[:100]}); using local fallback")
-                remove_background_fallback(source, out, feather=feather, background=background, mode="pro")
-        else:
-            if remove_background is None:
-                app.logger.warning(f"rembg unavailable ({_rembg_import_error}); using local fallback")
-            else:
-                app.logger.info("using local removebg fallback")
-            remove_background_fallback(source, out, feather=feather, background=background, mode="fast" if mode == "fast" else "pro")
+        app.logger.info(f"Processing AI removebg for {source.name}, model={rembg_model_for_mode(mode)}, file size={source.stat().st_size} bytes")
+        remove_background_ai(source, out, feather=feather, background=background, mode=mode)
+        app.logger.info(f"RemoveBG succeeded: {out.name}")
         return jsonify(image_response(out, "Download PNG image"))
     except Exception as e:
         app.logger.exception(f"RemoveBG endpoint error: {str(e)[:200]}")
