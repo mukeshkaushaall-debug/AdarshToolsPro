@@ -759,10 +759,28 @@ def pick_preview_video_url(formats):
     return candidates[0][-1] if candidates else ""
 
 
-def postprocess_cutout(path, feather=2, background="transparent"):
+def postprocess_cutout(path, feather=2, background="transparent", hd_mode=False):
+    """Advanced cutout post-processing with quality enhancements."""
     with Image.open(path) as img:
         rgba = img.convert("RGBA")
-        rgba.putalpha(refine_cutout_alpha(rgba.getchannel("A"), feather=feather))
+        
+        # Extract original RGB and alpha
+        rgb = Image.new("RGB", rgba.size, (255, 255, 255))
+        rgb.paste(rgba, mask=rgba.split()[3])
+        alpha_channel = rgba.split()[3]
+        
+        # Apply advanced alpha refinement
+        refined_alpha = refine_cutout_alpha_advanced(
+            alpha_channel, 
+            rgb, 
+            feather=feather, 
+            hd_mode=hd_mode
+        )
+        
+        # Create final RGBA with refined alpha
+        rgba.putalpha(refined_alpha)
+        
+        # Apply background if needed
         if background != "transparent":
             colors = {
                 "white": (255, 255, 255, 255),
@@ -772,14 +790,278 @@ def postprocess_cutout(path, feather=2, background="transparent"):
             canvas = Image.new("RGBA", rgba.size, colors.get(background, (255, 255, 255, 255)))
             canvas.alpha_composite(rgba)
             rgba = canvas
-        rgba.save(path, "PNG", optimize=True)
+        
+        # Save with best quality settings
+        rgba.save(path, "PNG", optimize=False)  # Disable PIL optimization to preserve quality
 
 
 def refine_cutout_alpha(alpha, feather=1):
+    """Original refinement function - kept for compatibility."""
     if feather > 0:
         alpha = alpha.filter(ImageFilter.GaussianBlur(min(feather, 6) * 0.45))
-    # Clear faint background haze while preserving soft hair/fabric edges.
     return alpha.point(lambda p: 0 if p < 6 else 255 if p > 250 else p)
+
+
+def refine_cutout_alpha_advanced(alpha, rgb, feather=1, hd_mode=False):
+    """
+    Advanced alpha refinement with:
+    - Multi-level edge smoothing
+    - Halo removal
+    - Jagged edge reduction
+    - Anti-aliasing
+    - Contour rendering
+    """
+    import numpy as np
+    
+    # Convert to numpy for advanced processing
+    alpha_array = np.array(alpha, dtype=np.float32)
+    rgb_array = np.array(rgb, dtype=np.float32)
+    height, width = alpha_array.shape
+    
+    # Step 1: Transparent pixel cleanup - identify and clean isolated noise
+    alpha_clean = cleanup_transparent_pixels(alpha_array.copy())
+    
+    # Step 2: Adaptive threshold for better boundary detection
+    alpha_clean = adaptive_alpha_threshold(alpha_clean)
+    
+    # Step 3: Advanced edge refinement with morphological operations
+    alpha_edges = refine_edges_morphological(alpha_clean)
+    
+    # Step 4: Color-aware edge blending for smooth transitions
+    if rgb_array is not None:
+        alpha_edges = color_aware_edge_blend(alpha_edges, rgb_array)
+    
+    # Step 5: Anti-aliasing for smooth contours
+    alpha_edges = apply_antialiasing(alpha_edges)
+    
+    # Step 6: Gaussian blur for feathering (feather range 0-8)
+    if feather > 0:
+        sigma = min(feather * 0.35, 2.8)  # Optimized sigma for edge smoothing
+        alpha_smooth = gaussian_blur_numpy(alpha_edges, sigma)
+    else:
+        alpha_smooth = alpha_edges
+    
+    # Step 7: Halo removal - reduce white outlines
+    alpha_dehalo = remove_halo_effect(alpha_smooth)
+    
+    # Step 8: HD mode - additional refinement passes for cleaner cutout
+    if hd_mode:
+        alpha_dehalo = apply_hd_refinement(alpha_dehalo, rgb_array)
+    
+    # Step 9: Final alpha channel refinement with proper thresholding
+    final_alpha = finalize_alpha_channel(alpha_dehalo)
+    
+    # Convert back to PIL Image
+    final_alpha_uint8 = np.uint8(np.clip(final_alpha * 255, 0, 255))
+    return Image.fromarray(final_alpha_uint8, mode='L')
+
+
+def cleanup_transparent_pixels(alpha_array):
+    """Remove isolated noise and create clean transparent regions."""
+    import numpy as np
+    import scipy.ndimage
+    
+    # Create binary mask (0 for transparent, 1 for opaque)
+    binary = (alpha_array > 30).astype(np.float32)
+    
+    # Remove small isolated regions (noise cleanup)
+    labeled, num_features = scipy.ndimage.label(binary)
+    sizes = scipy.ndimage.sum(binary, labeled, range(num_features + 1))
+    
+    # Keep only regions larger than minimum threshold
+    min_region_size = max(10, alpha_array.size // 10000)
+    cleaned = np.zeros_like(binary)
+    for i in range(1, num_features + 1):
+        if sizes[i] > min_region_size:
+            cleaned[labeled == i] = 1
+    
+    # Also clean very small transparent islands inside opaque regions
+    binary_inv = 1 - cleaned
+    labeled_inv, num_features_inv = scipy.ndimage.label(binary_inv)
+    sizes_inv = scipy.ndimage.sum(binary_inv, labeled_inv, range(num_features_inv + 1))
+    
+    for i in range(1, num_features_inv + 1):
+        if sizes_inv[i] < min_region_size:
+            cleaned[labeled_inv == i] = 1
+    
+    return cleaned * alpha_array.max()
+
+
+def adaptive_alpha_threshold(alpha_array):
+    """Apply adaptive thresholding for better boundary detection."""
+    import numpy as np
+    import scipy.ndimage
+    
+    alpha_norm = alpha_array / 255.0
+    
+    # Calculate local mean for adaptive thresholding
+    kernel_size = max(5, min(21, alpha_array.shape[0] // 50))
+    if kernel_size % 2 == 0:
+        kernel_size += 1
+    
+    # Compute local statistics using morphology
+    from scipy import ndimage
+    local_mean = ndimage.uniform_filter(alpha_norm, size=kernel_size)
+    local_var = ndimage.uniform_filter(alpha_norm**2, size=kernel_size) - local_mean**2
+    local_std = np.sqrt(np.maximum(local_var, 0))
+    
+    # Adaptive threshold: pixel > local_mean + 0.5*local_std
+    threshold_map = local_mean + 0.3 * local_std
+    adaptive_binary = (alpha_norm > threshold_map).astype(np.float32)
+    
+    # Blend original with adaptive for smooth transition
+    result = alpha_norm * 0.6 + adaptive_binary * 0.4
+    return result
+
+
+def refine_edges_morphological(alpha_array):
+    """Apply morphological operations to refine edges."""
+    import numpy as np
+    import scipy.ndimage
+    from scipy import ndimage
+    
+    alpha_norm = alpha_array / 255.0
+    
+    # Create binary mask for operations
+    binary = (alpha_norm > 0.5).astype(np.float32)
+    
+    # Morphological closing: remove small holes
+    structure = np.ones((3, 3))
+    closed = ndimage.binary_closing(binary, structure=structure, iterations=1).astype(np.float32)
+    
+    # Morphological opening: remove small artifacts on edges
+    opened = ndimage.binary_opening(closed, structure=structure, iterations=1).astype(np.float32)
+    
+    # Gradient for edge detection
+    gradient = ndimage.gaussian_gradient_magnitude(alpha_norm, sigma=0.5)
+    
+    # Enhance edges where there's high gradient
+    edge_boost = 1.0 + (gradient * 0.3)
+    
+    # Blend original with processed
+    result = (opened * edge_boost) * alpha_norm + (alpha_norm * 0.1)
+    return np.clip(result, 0, 1)
+
+
+def color_aware_edge_blend(alpha_array, rgb_array):
+    """Blend edges based on color information for smooth transitions."""
+    import numpy as np
+    from scipy import ndimage
+    
+    alpha_norm = alpha_array / 255.0 if alpha_array.max() > 1 else alpha_array
+    
+    # Calculate color gradients
+    r_grad = ndimage.gaussian_gradient_magnitude(rgb_array[:, :, 0], sigma=0.5)
+    g_grad = ndimage.gaussian_gradient_magnitude(rgb_array[:, :, 1], sigma=0.5)
+    b_grad = ndimage.gaussian_gradient_magnitude(rgb_array[:, :, 2], sigma=0.5)
+    color_grad = (r_grad + g_grad + b_grad) / 3.0
+    
+    # Normalize color gradient
+    color_grad = color_grad / (np.max(color_grad) + 1e-6)
+    
+    # Adaptive blending based on color variation
+    # Smoother blending in areas with color gradients (edges)
+    blend_factor = 0.7 + (color_grad * 0.3)
+    result = alpha_norm * blend_factor
+    
+    return np.clip(result, 0, 1)
+
+
+def apply_antialiasing(alpha_array):
+    """Apply anti-aliasing filter to reduce jagged edges."""
+    import numpy as np
+    from scipy import ndimage
+    
+    alpha_norm = alpha_array / 255.0 if alpha_array.max() > 1 else alpha_array
+    
+    # Apply edge-aware bilateral-like filter
+    # Use multiple Gaussian passes at different scales
+    smooth_1 = ndimage.gaussian_filter(alpha_norm, sigma=0.5)
+    smooth_2 = ndimage.gaussian_filter(alpha_norm, sigma=1.2)
+    smooth_3 = ndimage.gaussian_filter(alpha_norm, sigma=0.8)
+    
+    # Weighted blend for anti-aliasing
+    result = smooth_1 * 0.4 + smooth_2 * 0.3 + smooth_3 * 0.3
+    return result
+
+
+def gaussian_blur_numpy(alpha_array, sigma):
+    """High-quality Gaussian blur using numpy/scipy."""
+    import numpy as np
+    from scipy import ndimage
+    
+    alpha_norm = alpha_array / 255.0 if alpha_array.max() > 1 else alpha_array
+    blurred = ndimage.gaussian_filter(alpha_norm, sigma=sigma)
+    return blurred
+
+
+def remove_halo_effect(alpha_array):
+    """Remove white outlines/halo around edges."""
+    import numpy as np
+    from scipy import ndimage
+    
+    alpha_norm = alpha_array / 255.0 if alpha_array.max() > 1 else alpha_array
+    
+    # Detect halo regions: semi-transparent pixels at boundaries
+    # Halo typically shows as intermediate alpha values (100-200)
+    binary_strong = (alpha_norm > 0.85).astype(np.float32)
+    binary_weak = (alpha_norm > 0.35).astype(np.float32)
+    binary_halo = (binary_weak - binary_strong) > 0
+    
+    # Apply controlled dilation to preserve soft edges
+    structure = np.ones((3, 3))
+    halo_region = ndimage.binary_dilation(binary_halo, structure=structure, iterations=1).astype(np.float32)
+    
+    # Calculate proper alpha for halo region to match nearby strong alpha
+    strong_dilated = ndimage.binary_dilation(binary_strong, structure=structure, iterations=2).astype(np.float32)
+    
+    # Smooth transition from strong to weak
+    transition = ndimage.gaussian_filter(alpha_norm * strong_dilated, sigma=1.5)
+    
+    # Replace halo with smooth transition
+    result = alpha_norm.copy()
+    halo_mask = halo_region > 0
+    result[halo_mask] = np.minimum(result[halo_mask], transition[halo_mask] * 0.95)
+    
+    return result
+
+
+def apply_hd_refinement(alpha_array, rgb_array):
+    """Apply additional refinement for HD mode cleaner cutouts."""
+    import numpy as np
+    from scipy import ndimage
+    
+    alpha_norm = alpha_array / 255.0 if alpha_array.max() > 1 else alpha_array
+    
+    # Additional edge enhancement
+    edges = ndimage.sobel(alpha_norm)
+    edge_mask = edges > np.percentile(edges, 80)
+    
+    # Sharpen edges
+    edge_sharpening = ndimage.laplace(alpha_norm)
+    sharpened = alpha_norm - (edge_sharpening * 0.1)
+    
+    # Enhance clarity at boundaries
+    result = alpha_norm * 0.85 + sharpened * 0.15
+    
+    return np.clip(result, 0, 1)
+
+
+def finalize_alpha_channel(alpha_array):
+    """Final processing to prepare alpha channel."""
+    import numpy as np
+    
+    alpha_norm = alpha_array / 255.0 if alpha_array.max() > 1 else alpha_array
+    
+    # Apply final threshold with curve adjustment for better blacks/whites
+    # Use S-curve for smoother transitions
+    curve = np.array([0 if x < 0.1 else 1 if x > 0.9 else (0.5 * np.sin((x - 0.5) * np.pi) + 0.5) for x in alpha_norm.flat])
+    result = curve.reshape(alpha_norm.shape)
+    
+    # Slight boost to overall clarity
+    result = result * 1.02
+    
+    return np.clip(result, 0, 1)
 
 
 def cutout_has_useful_alpha(path):
@@ -811,31 +1093,58 @@ def get_rembg_session(model_name):
         return _rembg_sessions[model_name]
 
 
-def remove_background_ai(source, out, feather=1, background="transparent", mode="ai"):
+def remove_background_ai(source, out, feather=1, background="transparent", mode="ai", hd_mode=False):
     if remove_background is None:
         raise ApiError(f"Remove background AI dependency is unavailable: {_rembg_import_error}", 500)
+    
     with Image.open(source) as img:
         original = ImageOps.exif_transpose(img).convert("RGBA")
+    
     working = original.copy()
-    if max(working.size) > REMBG_MAX_SIDE:
-        working.thumbnail((REMBG_MAX_SIDE, REMBG_MAX_SIDE), Image.Resampling.LANCZOS)
+    original_size = working.size
+    
+    # For HD mode, process at higher resolution for better quality
+    if hd_mode:
+        max_side = min(1024, REMBG_MAX_SIDE * 2)
+    else:
+        max_side = REMBG_MAX_SIDE
+    
+    if max(working.size) > max_side:
+        working.thumbnail((max_side, max_side), Image.Resampling.LANCZOS)
+    
     model_name = rembg_model_for_mode(mode)
     session = get_rembg_session(model_name)
     kwargs = {"session": session, "post_process_mask": True} if session is not None else {"post_process_mask": True}
+    
+    # Enable alpha_matting for better edge quality
+    kwargs["alpha_matting"] = True
+    kwargs["alpha_matting_foreground_threshold"] = 240
+    kwargs["alpha_matting_background_threshold"] = 10
+    
     result = remove_background(working, **kwargs)
+    
     if isinstance(result, (bytes, bytearray)):
         with Image.open(io.BytesIO(result)) as result_img:
             cutout = result_img.convert("RGBA")
     else:
         cutout = result.convert("RGBA")
+    
     alpha = cutout.getchannel("A")
-    if alpha.size != original.size:
-        alpha = alpha.resize(original.size, Image.Resampling.LANCZOS)
+    
+    # Resize alpha to match original size if needed
+    if alpha.size != original_size:
+        alpha = alpha.resize(original_size, Image.Resampling.LANCZOS)
+    
     original.putalpha(alpha)
-    original.save(out, "PNG", optimize=True)
+    
+    # Save with high quality settings
+    original.save(out, "PNG", optimize=False)
+    
     if not cutout_has_useful_alpha(out):
         raise ApiError("AI cutout returned an empty or invalid mask.", 500)
-    postprocess_cutout(out, feather=feather, background=background)
+    
+    # Apply advanced post-processing with HD mode
+    postprocess_cutout(out, feather=feather, background=background, hd_mode=hd_mode)
 
 
 def warm_removebg_model():
@@ -2308,8 +2617,12 @@ def image_removebg():
         background = request.form.get("background", "transparent")
         mode = request.form.get("mode", "ai")
         mode = "ai"
-        app.logger.info(f"Processing AI removebg for {source.name}, model={rembg_model_for_mode(mode)}, file size={source.stat().st_size} bytes")
-        remove_background_ai(source, out, feather=feather, background=background, mode=mode)
+        
+        # Check for HD mode parameter
+        hd_mode = request.form.get("hd_mode", "0").lower() in {"1", "true", "yes"}
+        
+        app.logger.info(f"Processing AI removebg for {source.name}, model={rembg_model_for_mode(mode)}, file size={source.stat().st_size} bytes, hd_mode={hd_mode}")
+        remove_background_ai(source, out, feather=feather, background=background, mode=mode, hd_mode=hd_mode)
         app.logger.info(f"RemoveBG succeeded: {out.name}")
         return jsonify(image_response(out, "Download PNG image"))
     except Exception as e:
