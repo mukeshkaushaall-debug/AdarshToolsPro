@@ -846,9 +846,11 @@ def warm_removebg_model():
         return
     try:
         session = get_rembg_session(REMBG_MODEL_DEFAULT)
-        probe = Image.new("RGBA", (64, 64), (255, 255, 255, 255))
+        probe_size = max(128, min(REMBG_MAX_SIDE, 512))
+        probe = Image.new("RGBA", (probe_size, probe_size), (255, 255, 255, 255))
         draw = ImageDraw.Draw(probe)
-        draw.ellipse((18, 12, 46, 46), fill=(37, 99, 235, 255))
+        margin = max(16, probe_size // 5)
+        draw.ellipse((margin, margin // 2, probe_size - margin, probe_size - margin // 2), fill=(37, 99, 235, 255))
         remove_background(probe, session=session, post_process_mask=True)
         app.logger.info(f"RemoveBG model warmed: {REMBG_MODEL_DEFAULT}")
     except Exception as error:
