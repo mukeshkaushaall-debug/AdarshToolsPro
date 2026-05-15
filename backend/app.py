@@ -2002,6 +2002,17 @@ def inject_meta_and_schema(html, filename):
         graph = base_schema_graph(path, title, description) + tool_schema(filename, title, description)
         schema = json_ld_script({"@context": "https://schema.org", "@graph": graph}).replace("<script ", '<script data-seo-schema ')
         html = html.replace("</head>", f"  {schema}\n</head>", 1)
+    if 'G-PRQ6Z3GFZS' not in html:
+        ga_script = """  <!-- Google tag (gtag.js) -->
+  <script async src="https://www.googletagmanager.com/gtag/js?id=G-PRQ6Z3GFZS"></script>
+  <script>
+    window.dataLayer = window.dataLayer || [];
+    function gtag(){dataLayer.push(arguments);}
+    gtag('js', new Date());
+
+    gtag('config', 'G-PRQ6Z3GFZS');
+  </script>"""
+        html = html.replace("</head>", f"{ga_script}\n</head>", 1)
     return html
 
 
@@ -2282,6 +2293,15 @@ def legal_page(section):
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&display=swap" rel="stylesheet">
   <link rel="preload" href="/style.css" as="style">
   <link rel="stylesheet" href="/style.css">
+  <!-- Google tag (gtag.js) -->
+  <script async src="https://www.googletagmanager.com/gtag/js?id=G-PRQ6Z3GFZS"></script>
+  <script>
+    window.dataLayer = window.dataLayer || [];
+    function gtag(){{dataLayer.push(arguments);}}
+    gtag('js', new Date());
+
+    gtag('config', 'G-PRQ6Z3GFZS');
+  </script>
   {schema}
 </head>
 <body>
