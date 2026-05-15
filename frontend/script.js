@@ -256,9 +256,9 @@ async function postForm(url, formData) {
   const timeoutMs = url.includes("/api/image/removebg") ? 300000 : 90000;
   const isRemoveBg = url.includes("/api/image/removebg");
   let res = await fetchWithTimeout(API_BASE + url, { method: "POST", body: formData }, timeoutMs);
-  if (isRemoveBg && [502, 503, 504].includes(res.status)) {
-    toast("AI is waking up. Retrying automatically...");
-    await delay(1800);
+  for (let attempt = 1; isRemoveBg && [502, 503, 504].includes(res.status) && attempt <= 2; attempt += 1) {
+    toast(`AI is waking up. Retrying automatically (${attempt}/2)...`);
+    await delay(1600 + attempt * 900);
     res = await fetchWithTimeout(API_BASE + url, { method: "POST", body: formData }, timeoutMs);
   }
   return parseJSONResponse(res);
