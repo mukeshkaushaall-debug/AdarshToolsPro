@@ -179,6 +179,10 @@ async function fetchWithTimeout(url, options = {}, timeoutMs = 90000) {
   }
 }
 
+function delay(ms) {
+  return new Promise(resolve => setTimeout(resolve, ms));
+}
+
 function renderCards() {
   const grid = document.querySelector("[data-tools-grid]");
   if (!grid) return;
@@ -250,7 +254,13 @@ async function postJSON(url, body) {
 
 async function postForm(url, formData) {
   const timeoutMs = url.includes("/api/image/removebg") ? 300000 : 90000;
-  const res = await fetchWithTimeout(API_BASE + url, { method: "POST", body: formData }, timeoutMs);
+  const isRemoveBg = url.includes("/api/image/removebg");
+  let res = await fetchWithTimeout(API_BASE + url, { method: "POST", body: formData }, timeoutMs);
+  if (isRemoveBg && [502, 503, 504].includes(res.status)) {
+    toast("AI is waking up. Retrying automatically...");
+    await delay(1800);
+    res = await fetchWithTimeout(API_BASE + url, { method: "POST", body: formData }, timeoutMs);
+  }
   return parseJSONResponse(res);
 }
 
