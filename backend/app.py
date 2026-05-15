@@ -619,6 +619,9 @@ def social_preview_fallback(url, reason=""):
     if "instagram" in host and shortcode_match:
         media_type = "reel" if "/reel/" in parsed.path else "p"
         embed_url = f"https://www.instagram.com/{media_type}/{shortcode_match.group(1)}/embed"
+        permalink = f"https://www.instagram.com/{media_type}/{shortcode_match.group(1)}/"
+    else:
+        permalink = url
     try:
         html = fetch_url_text(url)
         title = extract_meta_value(html, "og:title", "twitter:title") or title
@@ -637,6 +640,8 @@ def social_preview_fallback(url, reason=""):
         "aspect_ratio": 1.0 if "instagram" in host else 16 / 9,
         "webpage_url": url,
         "embed_url": embed_url,
+        "embed_type": "instagram" if embed_url else "",
+        "permalink": permalink,
         "preview_note": "Instagram preview is shown through an embed when direct thumbnail metadata is blocked." if embed_url else (reason or "Limited preview. The site may require login or block metadata."),
     }
 

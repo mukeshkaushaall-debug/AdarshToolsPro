@@ -388,6 +388,7 @@ function appendAutoplayParams(value) {
   if (!value) return "";
   try {
     const url = new URL(value);
+    if (url.hostname.includes("instagram.com")) return url.toString();
     url.searchParams.set("autoplay", "1");
     url.searchParams.set("mute", "1");
     url.searchParams.set("playsinline", "1");
@@ -407,6 +408,39 @@ function isValidHttpUrl(value) {
   }
 }
 
+function isInstagramPreview(data) {
+  const embedUrl = data.embed_url || "";
+  return data.embed_type === "instagram" || /instagram\.com\/(p|reel|tv)\/[^/]+\/embed/i.test(embedUrl);
+}
+
+function instagramPermalink(data) {
+  const value = data.permalink || data.webpage_url || data.embed_url || "";
+  try {
+    const url = new URL(value);
+    url.search = "";
+    url.hash = "";
+    url.pathname = url.pathname.replace(/\/embed\/?$/i, "/");
+    if (!url.pathname.endsWith("/")) url.pathname += "/";
+    return url.toString();
+  } catch {
+    return value;
+  }
+}
+
+function processInstagramEmbeds() {
+  const embeds = document.querySelectorAll(".instagram-media");
+  if (!embeds.length) return;
+  if (window.instgrm?.Embeds?.process) {
+    window.instgrm.Embeds.process();
+    return;
+  }
+  if (document.querySelector('script[src*="instagram.com/embed.js"]')) return;
+  const script = document.createElement("script");
+  script.async = true;
+  script.src = "https://www.instagram.com/embed.js";
+  document.body.appendChild(script);
+}
+
 function renderPreview(host, data) {
   const ratio = Number(data.aspect_ratio) || 1.7778;
   host.style.setProperty("--preview-ratio", ratio);
@@ -414,7 +448,7 @@ function renderPreview(host, data) {
   host.classList.toggle("is-portrait", ratio < 1);
   const embedUrl = data.embed_url || getYouTubeEmbedUrl(data.webpage_url);
   if (data.preview_video_url) {
-    host.classList.remove("embed-preview");
+    host.classList.remove("embed-preview", "instagram-preview");
     host.innerHTML = `
       <div class="preview-media">
         <video src="${data.preview_video_url}" ${data.thumbnail ? `poster="${data.thumbnail}"` : ""} controls muted autoplay loop playsinline preload="metadata"></video>
@@ -426,8 +460,26 @@ function renderPreview(host, data) {
       </div>`;
     return;
   }
+  if (isInstagramPreview(data)) {
+    const permalink = instagramPermalink(data);
+    host.classList.add("embed-preview", "instagram-preview");
+    host.innerHTML = `
+      <div class="preview-media">
+        <blockquote class="instagram-media" data-instgrm-permalink="${permalink}" data-instgrm-version="14">
+          <a href="${permalink}" target="_blank" rel="noreferrer">Open Instagram preview</a>
+        </blockquote>
+      </div>
+      <div class="preview-meta">
+        <strong>${data.title || "Instagram preview"}</strong>
+        <p>${data.uploader || "instagram.com"}</p>
+        ${data.preview_note ? `<p>${data.preview_note}</p>` : ""}
+      </div>`;
+    processInstagramEmbeds();
+    return;
+  }
   if (embedUrl) {
     host.classList.add("embed-preview");
+    host.classList.remove("instagram-preview");
     host.innerHTML = `
       <div class="preview-media">
         <iframe src="${appendAutoplayParams(embedUrl)}" title="Video preview" loading="lazy" allow="autoplay; encrypted-media; picture-in-picture" allowfullscreen referrerpolicy="no-referrer-when-downgrade"></iframe>
@@ -439,7 +491,7 @@ function renderPreview(host, data) {
       </div>`;
     return;
   }
-  host.classList.remove("embed-preview");
+  host.classList.remove("embed-preview", "instagram-preview");
   host.innerHTML = `
     <div class="preview-media">
       ${data.thumbnail ? `<img src="${data.thumbnail}" alt="Video preview" loading="lazy" decoding="async">` : `<div class="preview-fallback">Preview</div>`}
@@ -512,7 +564,9 @@ function buildSocialPreviewFromUrl(url) {
         title: "Instagram preview",
         uploader: "instagram.com",
         aspect_ratio: 1,
+        embed_type: "instagram",
         embed_url: `https://www.instagram.com/${type}/${instagramMatch[2]}/embed`,
+        permalink: `https://www.instagram.com/${type}/${instagramMatch[2]}/`,
         preview_note: "Instagram direct thumbnail blocked hai, isliye embed preview dikhaya ja raha hai.",
       };
     }
@@ -538,10 +592,11 @@ function initLinkPreview(form) {
     const fastPreview = buildFastPreviewFromUrl(url);
     if (fastPreview) {
       renderPreview(host, fastPreview);
-      return;
+      if (!isInstagramPreview(fastPreview)) return;
+    } else {
+      host.classList.add("show");
+      host.innerHTML = `<div class="preview-fallback">...</div><div><strong>Fetching preview</strong><p>Please wait a moment</p></div>`;
     }
-    host.classList.add("show");
-    host.innerHTML = `<div class="preview-fallback">...</div><div><strong>Fetching preview</strong><p>Please wait a moment</p></div>`;
     try {
       const data = await postJSON("/api/media/info", { url });
       renderPreview(host, data);
