@@ -10,8 +10,9 @@ import base64
 import importlib
 import importlib.util
 import io
+import json
 import zipfile
-from html import unescape
+from html import escape, unescape
 from pathlib import Path
 from urllib.parse import parse_qs, unquote, urlparse
 
@@ -110,8 +111,204 @@ SEO_PAGES = [
     ("/image-converter", "weekly", "0.8"),
     ("/image-watermark", "weekly", "0.8"),
     ("/video-to-mp3", "weekly", "0.8"),
+    ("/invoice-generator", "weekly", "0.7"),
+    ("/about", "monthly", "0.5"),
+    ("/privacy-policy", "monthly", "0.4"),
+    ("/terms", "monthly", "0.4"),
+    ("/dmca", "monthly", "0.4"),
+    ("/contact", "monthly", "0.4"),
     ("/policy", "monthly", "0.4"),
 ]
+
+SITE_NAME = "ThugTools"
+DEFAULT_IMAGE = "/assets/remove-bg-logo.png"
+
+TOOL_PAGE_SEO = {
+    "youtube.html": {
+        "path": "/youtube-video-downloader",
+        "title": "YouTube Video Downloader - Save HD & 4K Videos Free | ThugTools",
+        "description": "Download public YouTube videos online in HD, 1080p, 2K, or 4K when available. Fast free YouTube downloader with preview and no signup.",
+        "keywords": "youtube video downloader, download youtube videos, youtube downloader hd, save youtube video, 4k youtube downloader",
+        "category": "VideoApplication",
+        "how": ["Paste a public YouTube video URL.", "Choose Best available or a preferred video quality.", "Click Download video and save the generated file."],
+        "features": ["HD, 2K, and 4K quality requests when the source provides them", "Fast link preview for supported YouTube URLs", "Temporary generated files for cleaner privacy"],
+        "faqs": [("Can I download private YouTube videos?", "No. Only public videos that are accessible to the server can be processed."), ("Why is a quality unavailable?", "YouTube may not expose every quality for every video or server location.")],
+        "related": [("/youtube-thumbnail-downloader", "YouTube Thumbnail Downloader"), ("/video-to-mp3", "Video to MP3"), ("/instagram-reel-downloader", "Instagram Downloader")],
+    },
+    "pinterest.html": {
+        "path": "/pinterest-downloader",
+        "title": "Pinterest Downloader - Save Public Videos & Pins Free | ThugTools",
+        "description": "Save public Pinterest videos and media online in best available quality. Free Pinterest downloader for creators with no signup.",
+        "keywords": "pinterest downloader, pinterest video downloader, save pinterest video, download pinterest pins",
+        "category": "VideoApplication",
+        "how": ["Copy a public Pinterest pin or video link.", "Paste the URL into the downloader.", "Choose a quality and download the result."],
+        "features": ["Supports public Pinterest video/media URLs", "Quality selector for available formats", "Preview-friendly workflow for creator references"],
+        "faqs": [("Do private Pinterest links work?", "No. Private, login-only, or blocked links may fail."), ("Does every pin include video?", "No. Some pins are image-only or expose limited downloadable media.")],
+        "related": [("/instagram-reel-downloader", "Instagram Downloader"), ("/youtube-video-downloader", "YouTube Downloader"), ("/image-compressor", "Image Compressor")],
+    },
+    "instagram.html": {
+        "path": "/instagram-reel-downloader",
+        "title": "Instagram Reel Downloader - Save Public Reels Free | ThugTools",
+        "description": "Download public Instagram reels, posts, and videos online in clean quality. Fast Instagram reel downloader with no signup.",
+        "keywords": "instagram reel downloader, instagram downloader, download instagram reels, save instagram video",
+        "category": "VideoApplication",
+        "how": ["Open a public Instagram reel or post.", "Paste its URL into ThugTools.", "Download the available video file."],
+        "features": ["Public reels and posts support", "Embed preview fallback when thumbnails are blocked", "Simple quality request controls"],
+        "faqs": [("Can it download private reels?", "No. Only public and accessible Instagram URLs should be used."), ("Why is preview limited sometimes?", "Instagram can block direct metadata, so the page may show an embed fallback.")],
+        "related": [("/pinterest-downloader", "Pinterest Downloader"), ("/video-to-mp3", "Video to MP3"), ("/image-watermark", "Watermark Studio")],
+    },
+    "thumbnail.html": {
+        "path": "/youtube-thumbnail-downloader",
+        "title": "YouTube Thumbnail Downloader - Download HD Thumbnails | ThugTools",
+        "description": "Download high-resolution YouTube thumbnails online from public video links. Save max resolution, SD, or HQ thumbnails fast.",
+        "keywords": "youtube thumbnail downloader, download youtube thumbnail, hd thumbnail saver, maxresdefault thumbnail",
+        "category": "UtilitiesApplication",
+        "how": ["Paste a public YouTube video URL.", "Click Download thumbnail.", "Preview and save the best available image."],
+        "features": ["Checks max resolution, SD, and HQ thumbnail sources", "No file upload needed", "Clean preview before download"],
+        "faqs": [("Will every video have a max resolution thumbnail?", "No. Some videos only expose standard or HQ thumbnails."), ("Can I use thumbnails commercially?", "Only if you have rights or permission to use the image.")],
+        "related": [("/youtube-video-downloader", "YouTube Downloader"), ("/image-compressor", "Image Compressor"), ("/image-watermark", "Watermark Studio")],
+    },
+    "qr.html": {
+        "path": "/qr-code-generator",
+        "title": "QR Code Generator - Create Free PNG QR Codes | ThugTools",
+        "description": "Generate crisp QR codes for links, text, WiFi notes, payments, profiles, and business cards. Free QR code generator with PNG download.",
+        "keywords": "qr code generator, create qr code, free qr code maker, qr code png, upi qr generator",
+        "category": "UtilitiesApplication",
+        "how": ["Enter a URL, text, profile, payment note, or WiFi detail.", "Choose the QR size.", "Generate and download the PNG QR code."],
+        "features": ["High error-correction QR output", "PNG download for sharing or print", "Works for URLs and plain text"],
+        "faqs": [("Are QR codes stored permanently?", "No. Generated files are temporary and cleaned automatically."), ("Can I print the QR code?", "Yes. Use a larger size for better print clarity.")],
+        "related": [("/invoice-generator", "Invoice Generator"), ("/image-to-pdf", "Image to PDF"), ("/image-compressor", "Image Compressor")],
+    },
+    "pdf-to-image.html": {
+        "path": "/pdf-to-image",
+        "title": "PDF to Image Converter - Export PDF Pages to PNG | ThugTools",
+        "description": "Convert PDF pages to high-quality PNG images online and download them as a ZIP file. Fast free PDF to image converter.",
+        "keywords": "pdf to image, pdf to png, convert pdf pages to images, pdf image converter",
+        "category": "BusinessApplication",
+        "how": ["Upload a PDF file.", "Choose the render scale.", "Convert pages and download the ZIP."],
+        "features": ["Exports one PNG per PDF page", "Scale control for sharper output", "ZIP download keeps pages together"],
+        "faqs": [("Why is the output a ZIP file?", "A ZIP keeps multiple page images together in one download."), ("Are large PDFs supported?", "Uploads are limited by the server size limit and processing time.")],
+        "related": [("/image-to-pdf", "Image to PDF"), ("/image-compressor", "Image Compressor"), ("/invoice-generator", "Invoice Generator")],
+    },
+    "image-to-pdf.html": {
+        "path": "/image-to-pdf",
+        "title": "Image to PDF Converter - Combine JPG PNG WEBP Free | ThugTools",
+        "description": "Convert JPG, PNG, and WEBP images into a clean printable PDF online. Upload one or many images and download one PDF.",
+        "keywords": "image to pdf, jpg to pdf, png to pdf, webp to pdf, combine images into pdf",
+        "category": "BusinessApplication",
+        "how": ["Upload one or more images.", "Choose page sizing.", "Convert and download the PDF file."],
+        "features": ["Multiple image upload support", "Auto and A4-style page options", "Print-ready PDF output"],
+        "faqs": [("Can I upload multiple images?", "Yes. Multiple images can become one PDF."), ("Which image types work?", "JPG, PNG, and WEBP uploads are supported.")],
+        "related": [("/pdf-to-image", "PDF to Image"), ("/image-compressor", "Image Compressor"), ("/invoice-generator", "Invoice Generator")],
+    },
+    "compress.html": {
+        "path": "/image-compressor",
+        "title": "Image Compressor - Reduce JPG & WEBP File Size Free | ThugTools",
+        "description": "Compress JPG and WEBP images online with quality and resize controls. Reduce image file size for websites and social uploads.",
+        "keywords": "image compressor, compress jpg, reduce image size, webp compressor, online image optimizer",
+        "category": "MultimediaApplication",
+        "how": ["Upload a JPG, PNG, or WEBP image.", "Choose output format, resize size, and quality.", "Compress and download the optimized file."],
+        "features": ["Quality slider for file-size control", "JPG and WEBP output options", "Optional resize for faster pages"],
+        "faqs": [("What quality setting is best?", "55 to 75 is a good balance for most web images."), ("Can I keep original dimensions?", "Yes. Choose Keep original size.")],
+        "related": [("/image-converter", "Image Converter"), ("/remove-background", "Remove Background"), ("/image-to-pdf", "Image to PDF")],
+    },
+    "removebg.html": {
+        "path": "/remove-background",
+        "title": "Remove Background - AI Transparent PNG Cutout Tool | ThugTools",
+        "description": "Remove image backgrounds online and create transparent PNG cutouts for products, portraits, profile photos, and social media.",
+        "keywords": "remove background, background remover, transparent png, ai cutout tool, product photo background remover",
+        "category": "MultimediaApplication",
+        "how": ["Upload an image with a clear subject.", "Choose edge feathering and output background.", "Process and download the PNG result."],
+        "features": ["Transparent PNG output", "Optional studio background colors", "Edge feather control for smoother cutouts"],
+        "faqs": [("What images work best?", "Clear subjects with contrast from the background work best."), ("Why are hair or shadows imperfect?", "Fine edges, shadows, and busy backgrounds are harder to separate.")],
+        "related": [("/ai-image-enhancer", "AI Image Enhancer"), ("/image-watermark", "Watermark Studio"), ("/image-compressor", "Image Compressor")],
+    },
+    "upscale.html": {
+        "path": "/image-upscale",
+        "title": "Image Upscaler - Enlarge Photos 2x & 4x Online | ThugTools",
+        "description": "Upscale images online by 2x or 4x with sharpening and detail controls. Enlarge photos for social, product, and print use.",
+        "keywords": "image upscaler, upscale image, enlarge photo, 2x image upscaler, 4x image upscaler",
+        "category": "MultimediaApplication",
+        "how": ["Upload a photo or graphic.", "Choose scale, mode, and detail strength.", "Upscale and download the larger image."],
+        "features": ["2x and 4x resize options", "Photo, crisp, and fast modes", "Detail sharpening after resize"],
+        "faqs": [("Does it restore missing detail?", "It improves size and sharpness, but very blurry originals still have limits."), ("Which mode should I use?", "Photo mode is safest for most pictures; crisp mode is stronger for graphics.")],
+        "related": [("/ai-image-enhancer", "AI Image Enhancer"), ("/image-compressor", "Image Compressor"), ("/remove-background", "Remove Background")],
+    },
+    "enhance.html": {
+        "path": "/ai-image-enhancer",
+        "title": "AI Image Enhancer - Sharpen, Brighten & Improve Photos | ThugTools",
+        "description": "Enhance images online with color, brightness, clarity, denoise, and sharpness controls. Improve photos for social and product use.",
+        "keywords": "ai image enhancer, enhance photo, sharpen image, improve image quality, photo enhancer",
+        "category": "MultimediaApplication",
+        "how": ["Upload a dull or low-detail image.", "Choose enhancement mode and strength.", "Enhance and download the finished image."],
+        "features": ["Auto, HDR, portrait, product, low-light, and sharp modes", "Adjustable enhancement strength", "Preview before downloading"],
+        "faqs": [("Which setting is safest?", "Auto mode works well for most images."), ("Can the result be subtle?", "Yes. Lower strength keeps the edit softer.")],
+        "related": [("/image-upscale", "Image Upscale"), ("/blur-background", "Blur Background"), ("/image-compressor", "Image Compressor")],
+    },
+    "blur.html": {
+        "path": "/blur-background",
+        "title": "Blur Background - DSLR Portrait Blur Effect Online | ThugTools",
+        "description": "Create DSLR-style background blur for photos online. Add subject-focused blur with adjustable feather and strength.",
+        "keywords": "blur background, portrait blur, dslr blur effect, background blur tool, photo blur editor",
+        "category": "MultimediaApplication",
+        "how": ["Upload a portrait, product, or subject photo.", "Choose subject or center mode.", "Adjust blur/feather and download the image."],
+        "features": ["Subject-aware and center blur modes", "Blur strength and feather controls", "Clean JPG output for social posts"],
+        "faqs": [("Which photos work best?", "Photos with a clear subject and simpler background work best."), ("Can I control the effect?", "Yes. Tune blur and feather sliders before processing.")],
+        "related": [("/ai-image-enhancer", "AI Image Enhancer"), ("/remove-background", "Remove Background"), ("/image-watermark", "Watermark Studio")],
+    },
+    "convert.html": {
+        "path": "/image-converter",
+        "title": "Image Converter - Convert PNG, JPG & WEBP Free | ThugTools",
+        "description": "Convert images between PNG, JPG, and WEBP online. Fast image format converter with preview and clean quality.",
+        "keywords": "image converter, png to jpg, jpg to webp, webp to png, convert image format",
+        "category": "MultimediaApplication",
+        "how": ["Upload a PNG, JPG, or WEBP image.", "Select the output format.", "Convert and download the new file."],
+        "features": ["PNG, JPG, and WEBP output", "Transparency-friendly formats", "Before and after preview"],
+        "faqs": [("Does JPG keep transparency?", "No. Use PNG or WEBP when transparency matters."), ("Which format is smallest?", "WEBP is often smallest, while JPG remains widely compatible.")],
+        "related": [("/image-compressor", "Image Compressor"), ("/image-to-pdf", "Image to PDF"), ("/image-watermark", "Watermark Studio")],
+    },
+    "watermark.html": {
+        "path": "/image-watermark",
+        "title": "Add Watermark to Images - Text Watermark Studio | ThugTools",
+        "description": "Add professional text watermarks to images online. Control font, opacity, angle, color, badge style, and position.",
+        "keywords": "add watermark, image watermark tool, text watermark, watermark photos, protect images online",
+        "category": "MultimediaApplication",
+        "how": ["Upload an image.", "Enter watermark text and adjust style controls.", "Place the watermark and download the protected image."],
+        "features": ["Manual placement and preset corners", "Font, color, opacity, size, and angle controls", "Badge styles for readable watermarks"],
+        "faqs": [("Can I move the watermark manually?", "Yes. Drag on the preview or use the position controls."), ("What opacity is best?", "25 to 45 percent is usually readable without feeling too heavy.")],
+        "related": [("/image-compressor", "Image Compressor"), ("/remove-background", "Remove Background"), ("/ai-image-enhancer", "AI Image Enhancer")],
+    },
+    "audio.html": {
+        "path": "/video-to-mp3",
+        "title": "Video to MP3 Converter - Extract Audio Online Free | ThugTools",
+        "description": "Convert public video links or uploaded video files to MP3 audio online. Extract clean 192 kbps MP3 files for permitted content.",
+        "keywords": "video to mp3, convert video to mp3, extract audio, youtube to mp3, mp3 converter",
+        "category": "MultimediaApplication",
+        "how": ["Paste a public video URL or upload your own video file.", "Start MP3 conversion.", "Download the generated audio file."],
+        "features": ["URL and local upload workflows", "Clean MP3 output", "Useful for owned recordings and permitted audio"],
+        "faqs": [("Why is FFmpeg needed?", "FFmpeg handles reliable audio extraction and conversion on the server."), ("Can I upload my own video?", "Yes. Supported local video files can be converted to MP3.")],
+        "related": [("/youtube-video-downloader", "YouTube Downloader"), ("/instagram-reel-downloader", "Instagram Downloader"), ("/pinterest-downloader", "Pinterest Downloader")],
+    },
+    "invoice.html": {
+        "path": "/invoice-generator",
+        "title": "Invoice Generator - Create Free PDF Invoices Online | ThugTools",
+        "description": "Create professional printable PDF invoices online with business details, items, tax, discount, and totals.",
+        "keywords": "invoice generator, create invoice, free invoice maker, pdf invoice, business invoice generator",
+        "category": "BusinessApplication",
+        "how": ["Enter business, client, and invoice details.", "Add items, tax, discount, and notes.", "Generate and download the PDF invoice."],
+        "features": ["Itemized invoice editor", "Tax and discount support", "Print-ready PDF output"],
+        "faqs": [("Is invoice data stored permanently?", "No. Generated files are temporary and cleaned automatically."), ("Can I add tax or GST?", "Yes. Use the tax fields available in the invoice form.")],
+        "related": [("/qr-code-generator", "QR Code Generator"), ("/image-to-pdf", "Image to PDF"), ("/pdf-to-image", "PDF to Image")],
+    },
+}
+
+LEGAL_PAGE_SEO = {
+    "/about": ("About Us | ThugTools", "Learn about ThugTools, a free creator tools platform for image, video, PDF, QR, and everyday utility workflows."),
+    "/privacy-policy": ("Privacy Policy | ThugTools", "Learn how ThugTools handles uploaded files, generated downloads, URLs, logs, privacy, and temporary storage."),
+    "/terms": ("Terms of Service | ThugTools", "Read the ThugTools terms of service, acceptable use rules, disclaimers, and user responsibilities."),
+    "/dmca": ("DMCA & Copyright Policy | ThugTools", "Review the ThugTools copyright policy, DMCA-style notice process, and responsible content-use rules."),
+    "/contact": ("Contact ThugTools | Support, Privacy & Copyright Requests", "Contact ThugTools for support, business, privacy, copyright, and website requests."),
+}
 
 app = Flask(__name__, static_folder=str(FRONTEND_DIR), static_url_path="")
 app.wsgi_app = ProxyFix(app.wsgi_app, x_for=1, x_proto=1, x_host=1)
@@ -1303,6 +1500,9 @@ def site_url():
     configured = os.environ.get("SITE_URL", "").strip().rstrip("/")
     if configured:
         return configured
+    host = request.host.split(",", 1)[0]
+    if "thugtools.xyz" in host:
+        return f"https://{host}"
     return request.host_url.rstrip("/")
 
 
@@ -1310,6 +1510,157 @@ def absolute_url(path):
     if path.startswith(("http://", "https://")):
         return path
     return f"{site_url()}{path if path.startswith('/') else '/' + path}"
+
+
+def first_match(pattern, text, default=""):
+    match = re.search(pattern, text, re.IGNORECASE | re.DOTALL)
+    return unescape(match.group(1).strip()) if match else default
+
+
+def json_ld_script(data):
+    return '<script type="application/ld+json">' + json.dumps(data, ensure_ascii=False, separators=(",", ":")) + "</script>"
+
+
+def html_attr(value):
+    return escape(str(value), quote=True)
+
+
+def base_schema_graph(path="/", title=None, description=None):
+    url = absolute_url(path)
+    image = absolute_url(DEFAULT_IMAGE)
+    title = title or SITE_NAME
+    description = description or "Free online creator tools for video, image, PDF, QR, and business workflows."
+    return [
+        {
+            "@type": "Organization",
+            "@id": absolute_url("/#organization"),
+            "name": SITE_NAME,
+            "url": absolute_url("/"),
+            "logo": {"@type": "ImageObject", "url": image},
+            "description": "Free online creator tools for media downloads, image editing, PDFs, QR codes, and business documents.",
+            "contactPoint": {"@type": "ContactPoint", "email": "thugtoolscontact@gmail.com", "contactType": "customer support"},
+        },
+        {
+            "@type": "WebSite",
+            "@id": absolute_url("/#website"),
+            "name": SITE_NAME,
+            "url": absolute_url("/"),
+            "publisher": {"@id": absolute_url("/#organization")},
+            "potentialAction": {
+                "@type": "SearchAction",
+                "target": {"@type": "EntryPoint", "urlTemplate": absolute_url("/?search={search_term_string}")},
+                "query-input": "required name=search_term_string",
+            },
+        },
+        {
+            "@type": "BreadcrumbList",
+            "itemListElement": [
+                {"@type": "ListItem", "position": 1, "name": "Home", "item": absolute_url("/")},
+                {"@type": "ListItem", "position": 2, "name": title.replace(" | ThugTools", ""), "item": url},
+            ] if path != "/" else [
+                {"@type": "ListItem", "position": 1, "name": "Home", "item": absolute_url("/")},
+            ],
+        },
+    ]
+
+
+def tool_schema(filename, title, description):
+    config = TOOL_PAGE_SEO.get(filename)
+    if not config:
+        return []
+    app_type = config.get("category", "WebApplication")
+    faq_items = [
+        {"@type": "Question", "name": question, "acceptedAnswer": {"@type": "Answer", "text": answer}}
+        for question, answer in config.get("faqs", [])
+    ]
+    return [
+        {
+            "@type": "SoftwareApplication",
+            "@id": absolute_url(config["path"] + "#software"),
+            "name": title.replace(" | ThugTools", ""),
+            "applicationCategory": app_type,
+            "operatingSystem": "Any",
+            "url": absolute_url(config["path"]),
+            "description": description,
+            "offers": {"@type": "Offer", "price": "0", "priceCurrency": "USD"},
+            "publisher": {"@id": absolute_url("/#organization")},
+        },
+        {"@type": "FAQPage", "mainEntity": faq_items},
+    ]
+
+
+def inject_meta_and_schema(html, filename):
+    config = TOOL_PAGE_SEO.get(filename)
+    title = config.get("title") if config else first_match(r"<title>(.*?)</title>", html, SITE_NAME)
+    description = config.get("description") if config else first_match(r'<meta name="description" content="([^"]*)"', html)
+    path = config.get("path") if config else request.path
+    keywords = config.get("keywords") if config else "free online tools, creator tools, image tools, video downloader, pdf tools, qr code generator"
+    title_attr = html_attr(title)
+    description_attr = html_attr(description)
+    keywords_attr = html_attr(keywords)
+
+    if config:
+        html = re.sub(r"<title>.*?</title>", f"<title>{escape(title)}</title>", html, count=1, flags=re.IGNORECASE | re.DOTALL)
+        html = re.sub(r'(<meta name="description" content=")[^"]*(")', lambda m: f"{m.group(1)}{description_attr}{m.group(2)}", html, count=1, flags=re.IGNORECASE)
+        html = re.sub(r'(<link rel="canonical" href=")[^"]*(")', lambda m: f"{m.group(1)}{absolute_url(path)}{m.group(2)}", html, count=1, flags=re.IGNORECASE)
+        html = re.sub(r'(<meta property="og:title" content=")[^"]*(")', lambda m: f"{m.group(1)}{title_attr}{m.group(2)}", html, count=1, flags=re.IGNORECASE)
+        html = re.sub(r'(<meta property="og:description" content=")[^"]*(")', lambda m: f"{m.group(1)}{description_attr}{m.group(2)}", html, count=1, flags=re.IGNORECASE)
+        html = re.sub(r'(<meta property="og:url" content=")[^"]*(")', lambda m: f"{m.group(1)}{absolute_url(path)}{m.group(2)}", html, count=1, flags=re.IGNORECASE)
+        html = re.sub(r'(<meta name="twitter:title" content=")[^"]*(")', lambda m: f"{m.group(1)}{title_attr}{m.group(2)}", html, count=1, flags=re.IGNORECASE)
+        html = re.sub(r'(<meta name="twitter:description" content=")[^"]*(")', lambda m: f"{m.group(1)}{description_attr}{m.group(2)}", html, count=1, flags=re.IGNORECASE)
+
+    if 'name="keywords"' not in html:
+        html = html.replace("  <meta name=\"robots\"", f"  <meta name=\"keywords\" content=\"{keywords_attr}\">\n  <meta name=\"robots\"", 1)
+    if 'name="author"' not in html:
+        html = html.replace("  <meta name=\"robots\"", f"  <meta name=\"author\" content=\"{SITE_NAME}\">\n  <meta name=\"robots\"", 1)
+    if 'rel="preload" href="../style.css"' not in html and "../style.css" in html:
+        html = html.replace('  <link rel="stylesheet" href="../style.css">', '  <link rel="preload" href="../style.css" as="style">\n  <link rel="stylesheet" href="../style.css">', 1)
+    if 'rel="preload" href="style.css"' not in html and 'href="style.css"' in html:
+        html = html.replace('  <link rel="stylesheet" href="style.css">', '  <link rel="preload" href="style.css" as="style">\n  <link rel="stylesheet" href="style.css">', 1)
+    if "data-seo-schema" not in html and (config or 'application/ld+json' not in html):
+        graph = base_schema_graph(path, title, description) + tool_schema(filename, title, description)
+        schema = json_ld_script({"@context": "https://schema.org", "@graph": graph}).replace("<script ", '<script data-seo-schema ')
+        html = html.replace("</head>", f"  {schema}\n</head>", 1)
+    return html
+
+
+def list_items(items):
+    return "".join(f"<li>{item}</li>" for item in items)
+
+
+def enrich_tool_body(html, filename):
+    config = TOOL_PAGE_SEO.get(filename)
+    if not config or "seo-upgrade" in html:
+        return html
+    downloader_notice = ""
+    if filename in {"youtube.html", "pinterest.html", "instagram.html", "thumbnail.html", "audio.html"}:
+        downloader_notice = '<p class="safe-notice"><strong>Safe Usage Notice:</strong> Use ThugTools only with files and public URLs you own or are authorized to process. Respect copyright, privacy, and platform terms.</p>'
+    related = "".join(f'<a href="{href}">{label}</a>' for href, label in config.get("related", []))
+    faq = "".join(
+        f"<details><summary>{question}</summary><p>{answer}</p></details>"
+        for question, answer in config.get("faqs", [])
+    )
+    upgrade = f"""
+    <section class="seo-upgrade" aria-label="{config['title'].split('|')[0].strip()} guide">
+      <div class="seo-card">
+        <h2>How to Use {config['title'].split(' - ')[0]}</h2>
+        <ol>{list_items(config.get('how', []))}</ol>
+      </div>
+      <div class="seo-card">
+        <h2>Key Features</h2>
+        <ul>{list_items(config.get('features', []))}</ul>
+      </div>
+      <div class="seo-card seo-faq">
+        <h2>Frequently Asked Questions</h2>
+        {faq}
+      </div>
+      <div class="seo-card related-tools">
+        <h2>Related Tools</h2>
+        <div>{related}</div>
+      </div>
+      {downloader_notice}
+    </section>"""
+    return html.replace("  </div></main>", f"{upgrade}\n  </div></main>", 1)
 
 
 def seo_html(filename, subdir=None):
@@ -1333,13 +1684,27 @@ def seo_html(filename, subdir=None):
         lambda match: f'{match.group(1)}{absolute_url(match.group(2))}{match.group(3)}',
         html,
     )
+    html = inject_meta_and_schema(html, filename)
+    html = enrich_tool_body(html, filename)
     return Response(html, mimetype="text/html")
 
 
 @app.route("/robots.txt")
 def robots_txt():
     base = site_url()
-    body = "User-agent: *\nAllow: /\nDisallow: /api/\nDisallow: /download/\n\nSitemap: {}/sitemap.xml\n".format(base)
+    body = (
+        "User-agent: *\n"
+        "Allow: /\n"
+        "Disallow: /api/\n"
+        "Disallow: /download/\n"
+        "Disallow: /backend/\n"
+        "Disallow: /uploads/\n\n"
+        "User-agent: Googlebot\n"
+        "Allow: /\n"
+        "Disallow: /api/\n"
+        "Disallow: /download/\n\n"
+        f"Sitemap: {base}/sitemap.xml\n"
+    )
     return Response(body, mimetype="text/plain")
 
 
@@ -1455,6 +1820,109 @@ def tool_policy():
     return seo_html("policy.html", "pages")
 
 
+def legal_page(section):
+    title, description = LEGAL_PAGE_SEO.get(section, LEGAL_PAGE_SEO["/privacy-policy"])
+    canonical = absolute_url(section)
+    title_attr = html_attr(title)
+    description_attr = html_attr(description)
+    sections = {
+        "/about": [
+            ("About ThugTools", "ThugTools is a free online creator tools platform built to make everyday media and document tasks faster. The site brings together video helpers, image tools, PDF converters, QR generation, and business utilities in one browser-based workspace."),
+            ("Our Mission", "Our goal is to provide simple, useful tools that work without unnecessary signups, complicated dashboards, or heavy setup. We focus on fast access, practical controls, clear results, and responsible use."),
+            ("How ThugTools Works", "Some tools run directly through browser-friendly workflows, while others use temporary server processing to create the result you request. Uploaded files and generated downloads are temporary and cleaned automatically."),
+            ("Responsible Use", "ThugTools should be used only with content you own or are authorized to process. Users are responsible for respecting copyright, privacy, platform terms, and applicable laws."),
+            ("Contact", "For support, business, privacy, or copyright requests, contact thugtoolscontact@gmail.com."),
+        ],
+        "/privacy-policy": [
+            ("Privacy Policy", "Uploaded files, generated downloads, and submitted URLs are used only to provide the tool result you request. Generated files are temporary and are automatically cleaned from server storage."),
+            ("Data We Process", "We may process uploaded files, public URLs, generated output files, browser request metadata, and basic server logs needed for reliability, abuse prevention, and debugging."),
+            ("Advertising & Analytics", "If ads or analytics are enabled, third-party providers may use cookies or similar technologies under their own policies."),
+        ],
+        "/terms": [
+            ("Terms of Service", "By using ThugTools, you agree to use the website only for lawful purposes and only with content you own, control, or are legally allowed to process."),
+            ("Acceptable Use", "Do not use this service to infringe copyright, bypass access controls, distribute harmful files, violate privacy, overload the service, or break third-party platform terms."),
+            ("Disclaimer", "Tools are provided as-is. Processing can fail for unsupported, private, login-only, blocked, or unavailable files and URLs."),
+        ],
+        "/dmca": [
+            ("DMCA & Copyright Policy", "ThugTools does not permanently host third-party media. Files created by tool actions are temporary and intended only for user-requested processing."),
+            ("Copyright Notices", "For copyright requests, email thugtoolscontact@gmail.com with the original URL, proof of ownership, the specific concern, and your contact details."),
+            ("User Responsibility", "Users are responsible for confirming they have the right to download, transform, store, or share any submitted content."),
+        ],
+        "/contact": [
+            ("Contact ThugTools", "For support, privacy, copyright, partnership, or website requests, contact thugtoolscontact@gmail.com."),
+            ("Before You Write", "Include the tool name, the public URL or file type involved, the error message if any, and a clear description of the request."),
+            ("Safe Usage", "Use only content you own or are authorized to process. Respect copyright, privacy, and platform terms."),
+        ],
+    }
+    content = "\n".join(f"<h2>{heading}</h2><p>{body}</p>" for heading, body in sections.get(section, []))
+    schema = json_ld_script({
+        "@context": "https://schema.org",
+        "@graph": base_schema_graph(section, title, description),
+    })
+    html = f"""<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{escape(title)}</title>
+  <meta name="description" content="{description_attr}">
+  <meta name="keywords" content="ThugTools legal, privacy policy, terms of service, DMCA, contact ThugTools">
+  <meta name="robots" content="index, follow, max-image-preview:large, max-snippet:-1">
+  <link rel="canonical" href="{canonical}">
+  <meta property="og:type" content="website">
+  <meta property="og:site_name" content="{SITE_NAME}">
+  <meta property="og:title" content="{title_attr}">
+  <meta property="og:description" content="{description_attr}">
+  <meta property="og:url" content="{canonical}">
+  <meta property="og:image" content="{absolute_url(DEFAULT_IMAGE)}">
+  <meta name="twitter:card" content="summary_large_image">
+  <meta name="twitter:title" content="{title_attr}">
+  <meta name="twitter:description" content="{description_attr}">
+  <meta name="twitter:image" content="{absolute_url(DEFAULT_IMAGE)}">
+  <meta name="theme-color" content="#2563eb">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&display=swap" rel="stylesheet">
+  <link rel="preload" href="/style.css" as="style">
+  <link rel="stylesheet" href="/style.css">
+  {schema}
+</head>
+<body>
+  <div class="rgb-line"></div>
+  <nav class="nav" role="navigation" aria-label="Main navigation"><div class="container nav-inner"><a class="brand" href="/" aria-label="ThugTools home"><div class="brand-mark" aria-hidden="true">T</div><span>ThugTools</span></a><div class="nav-links"><a href="/#tools">Tools</a><a href="/about">About</a><a href="/privacy-policy">Privacy</a><a href="/terms">Terms</a><a href="/dmca">DMCA</a><a href="/contact">Contact</a></div><div class="nav-actions"><button class="icon-btn" data-theme aria-label="Toggle theme"><span data-icon="sun"></span></button><button class="menu-btn" aria-label="Open menu"><span data-icon="menu"></span></button></div></div></nav>
+  <main class="legal-page"><div class="container legal-panel reveal"><span class="eyebrow">Trust & safety</span>{content}<div class="legal-links"><a href="/about">About Us</a><a href="/privacy-policy">Privacy Policy</a><a href="/terms">Terms</a><a href="/dmca">DMCA</a><a href="/contact">Contact</a></div></div></main>
+  <footer class="footer" role="contentinfo"><div class="container footer-inner"><div class="brand"><div class="brand-mark" aria-hidden="true">T</div><span>ThugTools</span></div><span>Use only with content you own or are allowed to process.</span></div></footer>
+  <div class="toast"></div><div class="spinner"><div class="loader"></div></div><script src="/script.js?v=20260515-seo-premium"></script>
+</body>
+</html>"""
+    return Response(html, mimetype="text/html")
+
+
+@app.route("/privacy-policy")
+def privacy_policy():
+    return legal_page("/privacy-policy")
+
+
+@app.route("/about")
+def about_page():
+    return legal_page("/about")
+
+
+@app.route("/terms")
+def terms_page():
+    return legal_page("/terms")
+
+
+@app.route("/dmca")
+def dmca_page():
+    return legal_page("/dmca")
+
+
+@app.route("/contact")
+def contact_page():
+    return legal_page("/contact")
+
+
 # Canonical URL mapping for /pages/* redirects (301 permanent redirects)
 PAGES_REDIRECT_MAP = {
     "youtube.html": "/youtube-video-downloader",
@@ -1473,6 +1941,7 @@ PAGES_REDIRECT_MAP = {
     "watermark.html": "/image-watermark",
     "audio.html": "/video-to-mp3",
     "invoice.html": "/invoice-generator",
+    "policy.html": "/privacy-policy",
 }
 
 @app.route("/pages/<path:filename>")

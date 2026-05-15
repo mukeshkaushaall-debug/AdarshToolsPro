@@ -2,4 +2,12 @@ User-agent: *
 Allow: /
 Disallow: /api/
 Disallow: /download/
+Disallow: /backend/
+Disallow: /uploads/
+
+User-agent: Googlebot
+Allow: /
+Disallow: /api/
+Disallow: /download/
+
 Sitemap: https://www.thugtools.xyz/sitemap.xml

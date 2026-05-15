@@ -55,7 +55,7 @@ function toolIcon(name) {
 }
 
 function initShell() {
-  document.body.classList.toggle("tool-page", location.pathname.includes("/pages/"));
+  document.body.classList.toggle("tool-page", location.pathname.includes("/pages/") || !!document.querySelector(".tool-shell"));
   document.addEventListener("submit", (event) => {
     if (event.target.matches("[data-upload-form], [data-video-upload-form], [data-url-form], [data-json-form]")) {
       event.preventDefault();
@@ -69,6 +69,10 @@ function initShell() {
   initThemeToggle();
   const obs = new IntersectionObserver(entries => entries.forEach(e => e.isIntersecting && e.target.classList.add("visible")), { threshold: .14 });
   document.querySelectorAll(".reveal").forEach(el => obs.observe(el));
+  document.querySelectorAll("img:not([loading])").forEach((img) => {
+    img.loading = "lazy";
+    img.decoding = "async";
+  });
   initAdSlots();
   initPolicyLinks();
   initProFormEnhancements();
@@ -95,7 +99,7 @@ function initThemeToggle() {
 
 function initAdSlots() {
   if (document.querySelector(".ad-slot")) return;
-  const isToolPage = location.pathname.includes("/pages/");
+  const isToolPage = location.pathname.includes("/pages/") || !!document.querySelector(".tool-shell");
   const nav = document.querySelector(".nav");
   const hero = document.querySelector(".hero");
   const toolsSection = document.querySelector("#tools");
@@ -123,11 +127,10 @@ function initAdSlots() {
 
 function initPolicyLinks() {
   const footer = document.querySelector(".footer-inner");
-  if (!footer || footer.querySelector(".policy-links")) return;
-  const base = location.pathname.includes("/pages/") ? "" : "pages/";
+  if (!footer || footer.querySelector(".policy-links") || footer.querySelector(".footer-content")) return;
   const links = document.createElement("div");
   links.className = "policy-links";
-  links.innerHTML = `<a href="${base}policy.html">Terms & Privacy</a><a href="${base}policy.html#copyright">Copyright</a><a href="${base}policy.html#contact">Contact</a>`;
+  links.innerHTML = `<a href="/about">About</a><a href="/privacy-policy">Privacy</a><a href="/terms">Terms</a><a href="/dmca">DMCA</a><a href="/contact">Contact</a>`;
   footer.appendChild(links);
 }
 
@@ -194,6 +197,10 @@ function renderCards() {
       <span>Hidden tools</span>
       ${hiddenItems.map(t => `<button type="button" data-unhide-tool="${t[0]}">Unhide ${t[1]}</button>`).join("")}
     ` : "";
+    if (!visibleItems.length) {
+      grid.innerHTML = `<div class="empty-search">No tools found. Try searching video, image, PDF, QR, or MP3.</div>`;
+      return;
+    }
     grid.innerHTML = visibleItems.map(t => {
       const isComingSoon = comingSoonTools.has(t[0]);
       return `
@@ -212,7 +219,9 @@ function renderCards() {
   draw(tools);
   document.querySelector("[data-search]")?.addEventListener("input", e => {
     currentQuery = e.target.value.toLowerCase().trim();
+    grid.classList.add("is-searching");
     draw(tools.filter(t => `${t[1]} ${t[2]}`.toLowerCase().includes(currentQuery)));
+    window.setTimeout(() => grid.classList.remove("is-searching"), 260);
   });
   document.addEventListener("click", (event) => {
     const hide = event.target.closest("[data-hide-tool]");
@@ -305,7 +314,7 @@ function resultPreview(data, previewHref) {
   if (data.preview_type === "pdf") {
     return `<iframe class="result-preview-frame" src="${previewHref}" title="Result preview"></iframe>`;
   }
-  return `<img class="result-preview-image" src="${API_BASE + data.preview_url}" alt="Result preview">`;
+  return `<img class="result-preview-image" src="${API_BASE + data.preview_url}" alt="Result preview" loading="lazy" decoding="async">`;
 }
 
 function startDownload(href) {
@@ -418,7 +427,7 @@ function renderPreview(host, data) {
   host.classList.remove("embed-preview");
   host.innerHTML = `
     <div class="preview-media">
-      ${data.thumbnail ? `<img src="${data.thumbnail}" alt="Video preview">` : `<div class="preview-fallback">Preview</div>`}
+      ${data.thumbnail ? `<img src="${data.thumbnail}" alt="Video preview" loading="lazy" decoding="async">` : `<div class="preview-fallback">Preview</div>`}
     </div>
     <div class="preview-meta">
       <strong>${data.title || "Media preview"}</strong>
@@ -673,12 +682,12 @@ function initUploadTool() {
       if (form.matches("[data-watermark-form]")) {
         before.innerHTML = `
           <div class="watermark-stage" data-watermark-stage>
-            <img src="${url}" alt="Before preview">
+            <img src="${url}" alt="Before preview" loading="lazy" decoding="async">
             <button class="watermark-marker" type="button" data-watermark-marker></button>
           </div>`;
         requestAnimationFrame(() => form.__updateWatermarkPreview?.());
       } else {
-        before.innerHTML = `<img src="${url}" alt="Before preview">`;
+        before.innerHTML = `<img src="${url}" alt="Before preview" loading="lazy" decoding="async">`;
       }
     }
     if (file.type.startsWith("image/")) {
