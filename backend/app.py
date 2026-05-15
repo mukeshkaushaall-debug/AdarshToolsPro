@@ -11,6 +11,7 @@ import importlib
 import importlib.util
 import io
 import json
+import hashlib
 import zipfile
 from html import escape, unescape
 from pathlib import Path
@@ -96,8 +97,9 @@ MAX_UPSCALE_PIXELS = 120_000_000
 CLEANUP_INTERVAL_SECONDS = 60
 _last_cleanup_at = 0
 FONT_DIR = Path(os.environ.get("WINDIR", "C:\\Windows")) / "Fonts"
-RUNTIME_COOKIES_FILE = Path(os.environ.get("TMPDIR", BASE_DIR)) / "youtube_cookies.txt"
-YOUTUBE_COOKIES_HELP = "YouTube is blocking this server as automated traffic. Add YOUTUBE_COOKIES_TEXT in Railway Variables, then redeploy."
+RUNTIME_COOKIES_DIR = Path(os.environ.get("TMPDIR", BASE_DIR)) / "youtube_cookies"
+RUNTIME_COOKIES_DIR.mkdir(parents=True, exist_ok=True)
+YOUTUBE_COOKIES_HELP = "YouTube is blocking this server. Add fresh YouTube cookies, or add multiple rotated profiles as YOUTUBE_COOKIES_TEXT_1, YOUTUBE_COOKIES_TEXT_2, and YOUTUBE_COOKIES_TEXT_3 in Railway Variables, then redeploy."
 SEO_PAGES = [
     ("/", "daily", "1.0"),
     ("/youtube-video-downloader", "weekly", "0.9"),
@@ -432,7 +434,124 @@ def simplify_download_error(message):
     return msg.replace("ERROR:", "").strip()[:220] or "Could not download this media. Try another public link."
 
 
-def ytdlp_base_opts(client="web"):
+def is_youtube_url(url):
+    host = urlparse(url).netloc.lower()
+    return "youtube.com" in host or "youtu.be" in host
+
+
+def is_youtube_block_error(message):
+    lowered = (message or "").lower()
+    needles = (
+        "automated traffic",
+        "confirm you are not a bot",
+        "sign in to confirm",
+        "not a bot",
+        "http error 403",
+        "forbidden",
+        "po token",
+    )
+    return any(needle in lowered for needle in needles)
+
+
+def normalize_cookies_text(cookies_text):
+    cookies_clean = (cookies_text or "").strip()
+    if not cookies_clean:
+        return ""
+    cookies_clean = cookies_clean.replace("\\r\\n", "\n").replace("\\n", "\n")
+    lines = [line.strip() for line in cookies_clean.splitlines() if line.strip()]
+    cookies_clean = "\n".join(lines)
+    if not (
+        cookies_clean.startswith("#")
+        or ".youtube.com" in cookies_clean
+        or ".google.com" in cookies_clean
+        or "youtube.com" in cookies_clean
+        or "google.com" in cookies_clean
+    ):
+        return ""
+    if not cookies_clean.startswith("#"):
+        cookies_clean = "# Netscape HTTP Cookie File\n" + cookies_clean
+    return cookies_clean + "\n"
+
+
+def decode_cookie_env(name):
+    value = os.environ.get(name, "").strip()
+    if not value:
+        return ""
+    try:
+        return base64.b64decode(value).decode("utf-8").strip()
+    except Exception:
+        return ""
+
+
+def youtube_cookie_sources():
+    sources = []
+    seen = set()
+
+    cookies_file = os.environ.get("YOUTUBE_COOKIES_FILE", "").strip()
+    if cookies_file and Path(cookies_file).exists():
+        sources.append({"label": "YOUTUBE_COOKIES_FILE", "file": cookies_file})
+
+    env_names = ["YOUTUBE_COOKIES_TEXT", "YOUTUBE_COOKIES_TEXT_B64"]
+    for index in range(1, 8):
+        env_names.extend([f"YOUTUBE_COOKIES_TEXT_{index}", f"YOUTUBE_COOKIES_TEXT_B64_{index}"])
+
+    for name in env_names:
+        raw = decode_cookie_env(name) if name.endswith("_B64") else os.environ.get(name, "")
+        cookies_clean = normalize_cookies_text(raw)
+        if not cookies_clean:
+            continue
+        digest = hashlib.sha256(cookies_clean.encode("utf-8")).hexdigest()[:16]
+        if digest in seen:
+            continue
+        seen.add(digest)
+        path = RUNTIME_COOKIES_DIR / f"{digest}.txt"
+        try:
+            path.write_text(cookies_clean, encoding="utf-8")
+            sources.append({"label": name, "file": str(path), "length": len(cookies_clean)})
+        except OSError:
+            continue
+
+    if os.environ.get("YOUTUBE_ALLOW_NO_COOKIES_FALLBACK", "1").strip().lower() not in {"0", "false", "no"}:
+        sources.append({"label": "NO_COOKIES", "file": ""})
+
+    return sources or [{"label": "NO_COOKIES", "file": ""}]
+
+
+def youtube_po_tokens():
+    values = []
+    for name in ("YOUTUBE_PO_TOKEN", "YOUTUBE_PO_TOKEN_1", "YOUTUBE_PO_TOKEN_2", "YOUTUBE_PO_TOKEN_3"):
+        value = os.environ.get(name, "").strip()
+        if value:
+            values.append(value)
+    raw = os.environ.get("YOUTUBE_PO_TOKENS", "").strip()
+    if raw:
+        values.extend([item.strip() for item in raw.split(",") if item.strip()])
+    return list(dict.fromkeys(values))
+
+
+def youtube_extractor_args(client):
+    youtube_args = {
+        "player_client": [client],
+        "lang": ["en"],
+    }
+    if client in {"web", "mweb"}:
+        youtube_args["player_skip"] = ["configs"]
+    elif client == "tv":
+        youtube_args["player_client"] = ["tv_embedded"]
+        youtube_args["player_skip"] = ["dash", "configs"]
+
+    visitor_data = os.environ.get("YOUTUBE_VISITOR_DATA", "").strip()
+    if visitor_data:
+        youtube_args["visitor_data"] = [visitor_data]
+
+    tokens = youtube_po_tokens()
+    if tokens:
+        youtube_args["po_token"] = tokens
+
+    return {"youtube": youtube_args, "youtubetab": {"skip": ["webpage"]}}
+
+
+def ytdlp_base_opts(client="web", cookie_source=None):
     """Generate base yt-dlp options with advanced client emulation for YouTube blocking avoidance."""
     user_agents = {
         "web": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36",
@@ -474,97 +593,54 @@ def ytdlp_base_opts(client="web"):
         "http_headers": http_headers,
     }
     
-    # Add client emulation arguments with multiple strategies
-    if client == "web":
-        opts["extractor_args"] = {
-            "youtube": {
-                "player_client": ["web"],
-                "player_skip": ["dash", "configs"],
-                "lang": ["en"],
-            }
-        }
-    elif client == "mweb":
-        opts["extractor_args"] = {
-            "youtube": {
-                "player_client": ["mweb"],
-                "player_skip": ["dash", "configs"],
-                "lang": ["en"],
-            }
-        }
-    elif client == "tv":
-        opts["extractor_args"] = {
-            "youtube": {
-                "player_client": ["tv_embedded"],
-                "player_skip": ["dash", "configs"],
-            }
-        }
+    opts["extractor_args"] = youtube_extractor_args(client)
     
     # Add request delay to avoid rate limiting
     opts["postprocessor_args"] = {
         "ffmpeg_o": ["-hide_banner", "-loglevel", "error"]
     }
     
-    # Add cookies if available
-    cookies_file = os.environ.get("YOUTUBE_COOKIES_FILE")
-    if cookies_file and Path(cookies_file).exists():
-        opts["cookiefile"] = cookies_file
-    else:
-        cookies_text = youtube_cookies_text()
-        if cookies_text:
-            try:
-                # Handle different line break formats
-                cookies_clean = cookies_text
-                if "\\n" in cookies_clean:
-                    cookies_clean = cookies_clean.replace("\\n", "\n")
-                elif "\\r\\n" in cookies_clean:
-                    cookies_clean = cookies_clean.replace("\\r\\n", "\n")
-                
-                # Ensure proper line breaks and clean format
-                lines = [line.strip() for line in cookies_clean.split("\n") if line.strip()]
-                cookies_clean = "\n".join(lines)
-                
-                # Validate format
-                if cookies_clean.startswith("#") or ".youtube.com" in cookies_clean or ".google.com" in cookies_clean:
-                    RUNTIME_COOKIES_FILE.write_text(cookies_clean + "\n", encoding="utf-8")
-                    opts["cookiefile"] = str(RUNTIME_COOKIES_FILE)
-            except (OSError, Exception):
-                pass
+    if cookie_source is None:
+        cookie_source = youtube_cookie_sources()[0]
+    if cookie_source.get("file"):
+        opts["cookiefile"] = cookie_source["file"]
     
     return opts
 
 
 def youtube_cookies_text():
-    cookies_text = os.environ.get("YOUTUBE_COOKIES_TEXT", "").strip()
-    if cookies_text:
-        return cookies_text
-    cookies_b64 = os.environ.get("YOUTUBE_COOKIES_TEXT_B64", "").strip()
-    if not cookies_b64:
-        return ""
-    try:
-        return base64.b64decode(cookies_b64).decode("utf-8").strip()
-    except Exception:
-        return ""
+    for source in youtube_cookie_sources():
+        if source.get("file"):
+            try:
+                return Path(source["file"]).read_text(encoding="utf-8").strip()
+            except OSError:
+                continue
+    return ""
 
 
 def youtube_cookie_status():
     cookies_file = os.environ.get("YOUTUBE_COOKIES_FILE", "")
     cookies_text_raw = os.environ.get("YOUTUBE_COOKIES_TEXT", "")
-    cookies_text = youtube_cookies_text()
     cookies_b64 = os.environ.get("YOUTUBE_COOKIES_TEXT_B64", "")
-    cookies_ready = bool((cookies_file and Path(cookies_file).exists()) or cookies_text)
+    sources = [source for source in youtube_cookie_sources() if source["label"] != "NO_COOKIES"]
+    cookies_ready = bool(sources)
     return {
         "cookies_file_configured": bool(cookies_file),
         "cookies_file_exists": bool(cookies_file and Path(cookies_file).exists()),
         "cookies_text_configured": bool(cookies_text_raw.strip()),
         "cookies_text_b64_configured": bool(cookies_b64.strip()),
-        "cookies_text_length": len(cookies_text),
+        "cookie_profiles": [source["label"] for source in sources],
+        "cookie_profile_count": len(sources),
         "cookies_ready": cookies_ready,
-        "cookies_problem": "" if cookies_ready else "Set YOUTUBE_COOKIES_TEXT or YOUTUBE_COOKIES_TEXT_B64 in Railway backend service variables, then redeploy.",
+        "po_token_configured": bool(youtube_po_tokens()),
+        "visitor_data_configured": bool(os.environ.get("YOUTUBE_VISITOR_DATA", "").strip()),
+        "yt_dlp_version": YTDLP_VERSION,
+        "cookies_problem": "" if cookies_ready else "Set YOUTUBE_COOKIES_TEXT_1, YOUTUBE_COOKIES_TEXT_2, and YOUTUBE_COOKIES_TEXT_3 in Railway backend service variables, then redeploy.",
     }
 
 
-def extract_info_safe(url, download=False, extra_opts=None):
-    opts = {**ytdlp_base_opts(), **(extra_opts or {})}
+def extract_info_safe(url, download=False, extra_opts=None, client="web", cookie_source=None):
+    opts = {**ytdlp_base_opts(client=client, cookie_source=cookie_source), **(extra_opts or {})}
     try:
         with YoutubeDL(opts) as ydl:
             return ydl.extract_info(url, download=download), ydl
@@ -717,7 +793,31 @@ def safe_download_path(filename):
 
 
 def media_info(url):
-    info, _ = extract_info_safe(url, download=False, extra_opts={"skip_download": True})
+    youtube_url = is_youtube_url(url)
+    clients = ["web", "mweb", "tv"] if youtube_url else ["web"]
+    cookie_sources = youtube_cookie_sources() if youtube_url else [{"label": "NO_COOKIES", "file": ""}]
+    attempts = [(cookie_source, client) for cookie_source in cookie_sources for client in clients]
+    last_error = None
+    for attempt_idx, (cookie_source, client) in enumerate(attempts):
+        try:
+            info, _ = extract_info_safe(
+                url,
+                download=False,
+                client=client,
+                cookie_source=cookie_source,
+                extra_opts={"skip_download": True},
+            )
+            break
+        except ApiError as error:
+            last_error = error
+            if youtube_url and is_youtube_block_error(error.message) and attempt_idx < len(attempts) - 1:
+                time.sleep(1)
+                continue
+            if attempt_idx < len(attempts) - 1:
+                continue
+            raise
+    else:
+        raise last_error or ApiError("Could not fetch preview.", 400)
     thumbnail = info.get("thumbnail")
     if not thumbnail and info.get("thumbnails"):
         thumbnail = info["thumbnails"][-1].get("url")
@@ -1769,13 +1869,20 @@ def ytdlp_video_format(quality, has_ffmpeg):
 def run_yt_dlp(url, mode, quality="1080"):
     output_prefix = make_id()
     output_template = str(DOWNLOAD_DIR / f"{output_prefix}_%(title).80s.%(ext)s")
-    clients = ["web", "mweb", "tv"]  # Try multiple clients - TV embedded often bypasses blocking
+    youtube_url = is_youtube_url(url)
+    clients = ["web", "mweb", "tv"] if youtube_url else ["web"]
+    cookie_sources = youtube_cookie_sources() if youtube_url else [{"label": "NO_COOKIES", "file": ""}]
+    attempts = [(cookie_source, client) for cookie_source in cookie_sources for client in clients]
     last_error = None
+    info = None
+    ydl = None
+    fallback_note = ""
+    quality_note = ""
     
-    for client_idx, client in enumerate(clients):
+    for attempt_idx, (cookie_source, client) in enumerate(attempts):
         try:
             common_opts = {
-                **ytdlp_base_opts(client=client),
+                **ytdlp_base_opts(client=client, cookie_source=cookie_source),
                 "outtmpl": output_template,
                 "restrictfilenames": True,
                 "windowsfilenames": True,
@@ -1795,10 +1902,13 @@ def run_yt_dlp(url, mode, quality="1080"):
                 }
             else:
                 has_ffmpeg = shutil.which("ffmpeg") is not None
-                probe_info, _ = extract_info_safe(url, download=False, extra_opts={
-                    "skip_download": True,
-                    **ytdlp_base_opts(client=client),
-                })
+                probe_info, _ = extract_info_safe(
+                    url,
+                    download=False,
+                    client=client,
+                    cookie_source=cookie_source,
+                    extra_opts={"skip_download": True},
+                )
                 format_selector, quality_note, _height = choose_available_video_format(probe_info, quality, has_ffmpeg)
                 ydl_opts = {
                     **common_opts,
@@ -1808,15 +1918,24 @@ def run_yt_dlp(url, mode, quality="1080"):
                     ydl_opts["merge_output_format"] = "mp4"
 
             try:
-                info, ydl = extract_info_safe(url, download=True, extra_opts=ydl_opts)
+                info, ydl = extract_info_safe(
+                    url,
+                    download=True,
+                    client=client,
+                    cookie_source=cookie_source,
+                    extra_opts=ydl_opts,
+                )
                 break  # Success with this client
             except ApiError as error:
                 format_error = (
                     "Requested quality is not available" in error.message
                     or "did not expose downloadable formats" in error.message
                 )
-                if mode != "audio" and format_error and client_idx < len(clients) - 1:
-                    # Try next client with a small delay to avoid rate limiting
+                if youtube_url and is_youtube_block_error(error.message) and attempt_idx < len(attempts) - 1:
+                    last_error = error
+                    time.sleep(1)
+                    continue
+                if mode != "audio" and format_error and attempt_idx < len(attempts) - 1:
                     last_error = error
                     time.sleep(1)
                     continue
@@ -1825,30 +1944,44 @@ def run_yt_dlp(url, mode, quality="1080"):
                     ydl_opts["format"] = "bv*+ba/b" if shutil.which("ffmpeg") else "b"
                     fallback_note = "Downloaded best available quality from the formats exposed by the source."
                     try:
-                        info, ydl = extract_info_safe(url, download=True, extra_opts=ydl_opts)
+                        info, ydl = extract_info_safe(
+                            url,
+                            download=True,
+                            client=client,
+                            cookie_source=cookie_source,
+                            extra_opts=ydl_opts,
+                        )
                         break
                     except ApiError as fallback_error:
                         last_error = fallback_error
-                        if client_idx < len(clients) - 1:
+                        if attempt_idx < len(attempts) - 1:
                             time.sleep(1)
                             continue
-                        if "automated traffic" in str(fallback_error.message).lower():
-                            cookies_status = "❌ No valid cookies found" if not youtube_cookies_text() else "⚠️ Cookies added but still blocked (may be expired)"
-                            raise ApiError(f"YouTube is blocking automated downloads. {cookies_status}. Solutions: 1) Add fresh YOUTUBE_COOKIES_TEXT to Railway Variables, 2) Wait 30 minutes and try again, 3) Try a different video.", 429) from fallback_error
+                        if is_youtube_block_error(fallback_error.message):
+                            status = youtube_cookie_status()
+                            raise ApiError(
+                                f"YouTube is blocking this server after {len(attempts)} attempts. "
+                                f"Cookie profiles configured: {status['cookie_profile_count']}. "
+                                "Add 2-3 fresh cookie profiles and optional YOUTUBE_PO_TOKEN/YOUTUBE_VISITOR_DATA, then redeploy.",
+                                429,
+                            ) from fallback_error
                         raise
                 else:
                     last_error = error
-                    if client_idx < len(clients) - 1:
+                    if attempt_idx < len(attempts) - 1:
                         time.sleep(1)
                         continue
                     raise
         except Exception as e:
             last_error = e
-            if client_idx < len(clients) - 1:
+            if attempt_idx < len(attempts) - 1:
                 time.sleep(1)
                 continue
             raise
     
+    if not info or not ydl:
+        raise last_error or ApiError("Could not download this media.", 400)
+
     if mode != "audio" and not fallback_note:
         fallback_note = quality_note
     
