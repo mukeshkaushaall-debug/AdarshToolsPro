@@ -11,6 +11,7 @@ import importlib
 import importlib.util
 import io
 import json
+from collections import deque
 import zipfile
 from html import escape, unescape
 from pathlib import Path
@@ -769,19 +770,150 @@ def postprocess_cutout(path, feather=2, background="transparent"):
         rgba.save(path, "PNG", optimize=True)
 
 
-def remove_background_fallback(source, out, feather=2, background="transparent"):
+def remove_background_fallback(source, out, feather=2, background="transparent", mode="pro"):
     with Image.open(source) as img:
-        rgba = img.convert("RGBA")
-        rgb = rgba.convert("RGB")
-        small = rgb.resize((1, 1), Image.Resampling.BOX)
-        bg = Image.new("RGB", rgb.size, small.getpixel((0, 0)))
-        diff = ImageChops.difference(rgb, bg).convert("L")
-        mask = diff.point(lambda p: 255 if p > 24 else 0)
-        mask = ImageOps.expand(mask, border=8, fill=0).filter(ImageFilter.GaussianBlur(5)).crop((8, 8, 8 + rgb.width, 8 + rgb.height))
-        mask = mask.filter(ImageFilter.MaxFilter(7)).filter(ImageFilter.GaussianBlur(2))
+        rgba = ImageOps.exif_transpose(img).convert("RGBA")
+        mask = smart_background_mask(rgba, mode=mode)
         rgba.putalpha(mask)
         rgba.save(out, "PNG", optimize=True)
     postprocess_cutout(out, feather=feather, background=background)
+
+
+def smart_background_mask(rgba, mode="pro"):
+    original_size = rgba.size
+    rgb = rgba.convert("RGB")
+    max_side = 1100 if mode == "pro" else 760
+    scale = min(1, max_side / max(rgb.size))
+    work = rgb.resize((max(1, int(rgb.width * scale)), max(1, int(rgb.height * scale))), Image.Resampling.LANCZOS) if scale < 1 else rgb
+    try:
+        import numpy as np
+    except Exception:
+        return simple_background_mask(work).resize(original_size, Image.Resampling.LANCZOS)
+
+    arr = np.asarray(work).astype(np.float32)
+    height, width = arr.shape[:2]
+    band = max(2, min(width, height) // 18)
+    border = np.concatenate([
+        arr[:band, :, :].reshape(-1, 3),
+        arr[-band:, :, :].reshape(-1, 3),
+        arr[:, :band, :].reshape(-1, 3),
+        arr[:, -band:, :].reshape(-1, 3),
+    ])
+    centers = background_palette(border)
+    distances = np.min([np.sqrt(np.sum((arr - center) ** 2, axis=2)) for center in centers], axis=0)
+    border_distances = np.concatenate([
+        distances[:band, :].ravel(),
+        distances[-band:, :].ravel(),
+        distances[:, :band].ravel(),
+        distances[:, -band:].ravel(),
+    ])
+    threshold = float(np.percentile(border_distances, 92) + (12 if mode == "pro" else 18))
+    threshold = max(20, min(82 if mode == "pro" else 96, threshold))
+    background_candidate = distances <= threshold
+    reached = flood_background_from_edges(background_candidate)
+    foreground = ~reached
+    foreground = keep_foreground_components(foreground)
+    mask = Image.fromarray((foreground.astype("uint8") * 255), "L")
+    mask = mask.filter(ImageFilter.MedianFilter(3))
+    mask = mask.filter(ImageFilter.MaxFilter(5)).filter(ImageFilter.MinFilter(3))
+    if mode == "pro":
+        mask = mask.filter(ImageFilter.GaussianBlur(0.55))
+    return mask.resize(original_size, Image.Resampling.LANCZOS)
+
+
+def background_palette(border_pixels):
+    try:
+        import numpy as np
+        pixels = np.asarray(border_pixels, dtype=np.uint8)
+        if len(pixels) > 12000:
+            pixels = pixels[::max(1, len(pixels) // 12000)]
+        strip = Image.fromarray(pixels.reshape(1, len(pixels), 3), "RGB")
+        palette = strip.quantize(colors=8, method=Image.Quantize.MEDIANCUT).convert("RGB")
+        colors = palette.getcolors(maxcolors=16) or []
+        centers = [color for count, color in sorted(colors, reverse=True)[:8]]
+        if not centers:
+            centers = [tuple(int(value) for value in np.median(pixels, axis=0))]
+        return [np.array(color, dtype=np.float32) for color in centers]
+    except Exception:
+        return [(235, 235, 235)]
+
+
+def flood_background_from_edges(background_candidate):
+    try:
+        import numpy as np
+    except Exception:
+        return background_candidate
+    height, width = background_candidate.shape
+    reached = np.zeros((height, width), dtype=bool)
+    queue = deque()
+    for x in range(width):
+        if background_candidate[0, x]:
+            reached[0, x] = True
+            queue.append((0, x))
+        if background_candidate[height - 1, x]:
+            reached[height - 1, x] = True
+            queue.append((height - 1, x))
+    for y in range(height):
+        if background_candidate[y, 0] and not reached[y, 0]:
+            reached[y, 0] = True
+            queue.append((y, 0))
+        if background_candidate[y, width - 1] and not reached[y, width - 1]:
+            reached[y, width - 1] = True
+            queue.append((y, width - 1))
+    while queue:
+        y, x = queue.popleft()
+        for ny, nx in ((y - 1, x), (y + 1, x), (y, x - 1), (y, x + 1)):
+            if 0 <= ny < height and 0 <= nx < width and background_candidate[ny, nx] and not reached[ny, nx]:
+                reached[ny, nx] = True
+                queue.append((ny, nx))
+    return reached
+
+
+def keep_foreground_components(foreground):
+    try:
+        import numpy as np
+    except Exception:
+        return foreground
+    height, width = foreground.shape
+    visited = np.zeros((height, width), dtype=bool)
+    kept = np.zeros((height, width), dtype=bool)
+    minimum_area = max(80, int(width * height * 0.0025))
+    center_y, center_x = height / 2, width / 2
+    components = []
+    for start_y, start_x in zip(*np.where(foreground & ~visited)):
+        queue = deque([(int(start_y), int(start_x))])
+        visited[start_y, start_x] = True
+        pixels = []
+        while queue:
+            y, x = queue.popleft()
+            pixels.append((y, x))
+            for ny, nx in ((y - 1, x), (y + 1, x), (y, x - 1), (y, x + 1)):
+                if 0 <= ny < height and 0 <= nx < width and foreground[ny, nx] and not visited[ny, nx]:
+                    visited[ny, nx] = True
+                    queue.append((ny, nx))
+        area = len(pixels)
+        if area < minimum_area:
+            continue
+        ys = [p[0] for p in pixels]
+        xs = [p[1] for p in pixels]
+        cy = sum(ys) / area
+        cx = sum(xs) / area
+        center_score = 1 - min(1, (((cy - center_y) / max(1, height)) ** 2 + ((cx - center_x) / max(1, width)) ** 2) ** 0.5 * 2)
+        components.append((area * (1 + center_score), pixels))
+    components.sort(reverse=True, key=lambda item: item[0])
+    for _, pixels in components[:4]:
+        for y, x in pixels:
+            kept[y, x] = True
+    return kept if components else foreground
+
+
+def simple_background_mask(rgb):
+    small = rgb.resize((1, 1), Image.Resampling.BOX)
+    bg = Image.new("RGB", rgb.size, small.getpixel((0, 0)))
+    diff = ImageChops.difference(rgb, bg).convert("L")
+    mask = diff.point(lambda p: 255 if p > 24 else 0)
+    mask = ImageOps.expand(mask, border=8, fill=0).filter(ImageFilter.GaussianBlur(5)).crop((8, 8, 8 + rgb.width, 8 + rgb.height))
+    return mask.filter(ImageFilter.MaxFilter(7)).filter(ImageFilter.GaussianBlur(2))
 
 
 def should_use_rembg():
@@ -2227,6 +2359,9 @@ def image_removebg():
         feather = int(request.form.get("feather", 2))
         feather = max(0, min(feather, 8))
         background = request.form.get("background", "transparent")
+        mode = request.form.get("mode", "pro")
+        if mode not in {"pro", "fast"}:
+            mode = "pro"
         if should_use_rembg():
             try:
                 app.logger.info(f"Processing removebg for {source.name}, file size: {source.stat().st_size} bytes")
@@ -2242,10 +2377,10 @@ def image_removebg():
                 app.logger.info(f"RemoveBG succeeded: {out.name}")
             except Exception as e:
                 app.logger.exception(f"rembg failed ({str(e)[:100]}); using local fallback")
-                remove_background_fallback(source, out, feather=feather, background=background)
+                remove_background_fallback(source, out, feather=feather, background=background, mode=mode)
         else:
             app.logger.info("using local removebg fallback")
-            remove_background_fallback(source, out, feather=feather, background=background)
+            remove_background_fallback(source, out, feather=feather, background=background, mode=mode)
         return jsonify(image_response(out, "Download PNG image"))
     except Exception as e:
         app.logger.exception(f"RemoveBG endpoint error: {str(e)[:200]}")
