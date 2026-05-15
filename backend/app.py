@@ -127,8 +127,8 @@ SEO_PAGES = [
 SITE_NAME = "ThugTools"
 DEFAULT_IMAGE = "/assets/site-logo.png"
 SITE_DESCRIPTION = "ThugTools is built for creators who do not like waiting."
-REMBG_MODEL_DEFAULT = os.environ.get("REMBG_MODEL", "u2net").strip() or "u2net"
-REMBG_MAX_SIDE = int(os.environ.get("REMBG_MAX_SIDE", "768"))
+REMBG_MODEL_DEFAULT = os.environ.get("REMBG_MODEL", "u2netp").strip() or "u2netp"
+REMBG_MAX_SIDE = int(os.environ.get("REMBG_MAX_SIDE", "512"))
 _rembg_sessions = {}
 _rembg_session_lock = threading.Lock()
 

@@ -4,8 +4,8 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     PIP_NO_CACHE_DIR=1 \
     U2NET_HOME=/app/backend/models/rembg \
-    REMBG_MODEL=u2net \
-    REMBG_MAX_SIDE=768 \
+    REMBG_MODEL=u2netp \
+    REMBG_MAX_SIDE=512 \
     OMP_NUM_THREADS=1 \
     PORT=5000
 
@@ -20,7 +20,7 @@ RUN pip install --upgrade pip \
     && pip install -r /app/backend/requirements.txt
 
 RUN mkdir -p /app/backend/models/rembg \
-    && python -c "from rembg import new_session; new_session('u2net')"
+    && python -c "from rembg import new_session; new_session('u2netp')"
 
 COPY . /app
 
