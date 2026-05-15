@@ -1943,6 +1943,7 @@ def ytdlp_video_format(quality, has_ffmpeg):
 
 
 def best_direct_video_format(info, quality):
+    """Select best video format, prioritizing formats with audio for Instagram."""
     formats = info.get("formats") or []
     videos = [
         item for item in formats
@@ -1951,7 +1952,27 @@ def best_direct_video_format(info, quality):
         and item.get("vcodec") != "none"
         and format_number(item.get("height")) > 0
     ]
+    
+    # Separate formats with and without audio
+    videos_with_audio = [
+        item for item in videos
+        if item.get("acodec") and item.get("acodec") != "none"
+    ]
+    
     requested_height = requested_video_height(quality)
+    
+    # First try to find format with audio at requested quality
+    if videos_with_audio:
+        if requested_height:
+            limited_with_audio = [item for item in videos_with_audio if format_number(item.get("height")) <= requested_height]
+            selected = max(limited_with_audio or videos_with_audio, key=video_format_score, default=None)
+        else:
+            selected = max(videos_with_audio, key=video_format_score, default=None)
+        
+        if selected:
+            return selected
+    
+    # Fallback to any video format if no audio version found
     if requested_height:
         limited = [item for item in videos if format_number(item.get("height")) <= requested_height]
     else:
@@ -2047,8 +2068,18 @@ def run_yt_dlp(url, mode, quality="1080"):
     fallback_note = ""
     quality_note = ""
     
+    import random
+    
     for attempt_idx, (cookie_source, client) in enumerate(attempts):
         try:
+            # Add progressive delay between attempts to avoid rate limiting
+            if attempt_idx > 0:
+                # Progressive delay: 1-2s for first retry, 2-3s for second, etc.
+                base_delay = min(attempt_idx * 0.8, 3.5)
+                jitter = random.uniform(0.5, 1.5)
+                delay = base_delay + jitter
+                time.sleep(delay)
+            
             common_opts = {
                 **ytdlp_base_opts(client=client, cookie_source=cookie_source),
                 "outtmpl": output_template,
