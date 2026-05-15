@@ -17,7 +17,7 @@ from urllib.parse import parse_qs, unquote, urlparse
 
 import requests
 import certifi
-from flask import Flask, Response, jsonify, request, send_file, send_from_directory
+from flask import Flask, Response, jsonify, request, send_file, send_from_directory, redirect
 from flask_cors import CORS
 from PIL import Image, ImageChops, ImageDraw, ImageEnhance, ImageFilter, ImageFont, ImageOps
 from werkzeug.utils import secure_filename
@@ -1455,8 +1455,32 @@ def tool_policy():
     return seo_html("policy.html", "pages")
 
 
+# Canonical URL mapping for /pages/* redirects (301 permanent redirects)
+PAGES_REDIRECT_MAP = {
+    "youtube.html": "/youtube-video-downloader",
+    "pinterest.html": "/pinterest-downloader",
+    "instagram.html": "/instagram-reel-downloader",
+    "thumbnail.html": "/youtube-thumbnail-downloader",
+    "qr.html": "/qr-code-generator",
+    "pdf-to-image.html": "/pdf-to-image",
+    "image-to-pdf.html": "/image-to-pdf",
+    "compress.html": "/image-compressor",
+    "removebg.html": "/remove-background",
+    "upscale.html": "/image-upscale",
+    "enhance.html": "/ai-image-enhancer",
+    "blur.html": "/blur-background",
+    "convert.html": "/image-converter",
+    "watermark.html": "/image-watermark",
+    "audio.html": "/video-to-mp3",
+    "invoice.html": "/invoice-generator",
+}
+
 @app.route("/pages/<path:filename>")
 def pages(filename):
+    # 301 redirect to canonical clean URLs for HTML pages
+    if filename in PAGES_REDIRECT_MAP:
+        return redirect(PAGES_REDIRECT_MAP[filename], code=301)
+    # Serve non-HTML assets from /pages/ directory
     if filename.endswith(".html"):
         return seo_html(filename, "pages")
     return send_from_directory(FRONTEND_DIR / "pages", filename)
