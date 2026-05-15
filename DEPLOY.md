@@ -43,6 +43,20 @@ Optional advanced variables:
 
 After adding or refreshing variables, redeploy and open `/api/youtube/status`. Confirm `cookie_profile_count` is at least `2` and `yt_dlp_version` is current.
 
+## Instagram Reliability Variables
+
+Instagram frequently allows preview metadata but asks the server to log in during the download request. The backend now reuses the short-lived preview media URL when possible and can rotate multiple Instagram cookie profiles:
+
+- `INSTAGRAM_COOKIES_TEXT_1`
+- `INSTAGRAM_COOKIES_TEXT_2`
+- `INSTAGRAM_COOKIES_TEXT_3`
+
+Optional:
+
+- `INSTAGRAM_ALLOW_NO_COOKIES_FALLBACK=1`
+
+After adding or refreshing variables, redeploy and open `/api/instagram/status`. Confirm `cookie_profile_count` is at least `2`. For best reliability, paste the link, wait for the preview to load, then click download so the backend can reuse the preview session.
+
 ## Notes
 
 - Use enough memory if possible. `rembg`/`onnxruntime`, PDF rendering, uploads, and video conversion can be memory-heavy.

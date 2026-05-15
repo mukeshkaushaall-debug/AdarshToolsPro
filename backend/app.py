@@ -96,10 +96,13 @@ DELETE_AFTER_DOWNLOAD_SECONDS = 30
 MAX_UPSCALE_PIXELS = 120_000_000
 CLEANUP_INTERVAL_SECONDS = 60
 _last_cleanup_at = 0
+MEDIA_INFO_CACHE_SECONDS = 10 * 60
+_media_info_cache = {}
 FONT_DIR = Path(os.environ.get("WINDIR", "C:\\Windows")) / "Fonts"
 RUNTIME_COOKIES_DIR = Path(os.environ.get("TMPDIR", BASE_DIR)) / "youtube_cookies"
 RUNTIME_COOKIES_DIR.mkdir(parents=True, exist_ok=True)
 YOUTUBE_COOKIES_HELP = "YouTube is blocking this server. Add fresh YouTube cookies, or add multiple rotated profiles as YOUTUBE_COOKIES_TEXT_1, YOUTUBE_COOKIES_TEXT_2, and YOUTUBE_COOKIES_TEXT_3 in Railway Variables, then redeploy."
+INSTAGRAM_COOKIES_HELP = "Instagram is asking this server to log in. Add fresh Instagram cookies as INSTAGRAM_COOKIES_TEXT_1, INSTAGRAM_COOKIES_TEXT_2, and INSTAGRAM_COOKIES_TEXT_3 in Railway Variables, then redeploy."
 SEO_PAGES = [
     ("/", "daily", "1.0"),
     ("/youtube-video-downloader", "weekly", "0.9"),
@@ -439,6 +442,10 @@ def is_youtube_url(url):
     return "youtube.com" in host or "youtu.be" in host
 
 
+def is_instagram_url(url):
+    return "instagram.com" in urlparse(url).netloc.lower()
+
+
 def is_youtube_block_error(message):
     lowered = (message or "").lower()
     needles = (
@@ -453,19 +460,32 @@ def is_youtube_block_error(message):
     return any(needle in lowered for needle in needles)
 
 
-def normalize_cookies_text(cookies_text):
+def is_auth_block_error(message):
+    lowered = (message or "").lower()
+    needles = (
+        "login",
+        "log in",
+        "sign in",
+        "private",
+        "forbidden",
+        "http error 403",
+        "not authorized",
+        "requires authentication",
+    )
+    return any(needle in lowered for needle in needles)
+
+
+def normalize_cookies_text(cookies_text, domains=()):
     cookies_clean = (cookies_text or "").strip()
     if not cookies_clean:
         return ""
     cookies_clean = cookies_clean.replace("\\r\\n", "\n").replace("\\n", "\n")
     lines = [line.strip() for line in cookies_clean.splitlines() if line.strip()]
     cookies_clean = "\n".join(lines)
+    domains = tuple(domains or ())
     if not (
         cookies_clean.startswith("#")
-        or ".youtube.com" in cookies_clean
-        or ".google.com" in cookies_clean
-        or "youtube.com" in cookies_clean
-        or "google.com" in cookies_clean
+        or any(domain in cookies_clean for domain in domains)
     ):
         return ""
     if not cookies_clean.startswith("#"):
@@ -483,21 +503,21 @@ def decode_cookie_env(name):
         return ""
 
 
-def youtube_cookie_sources():
+def platform_cookie_sources(prefix, domains, allow_no_cookies=True):
     sources = []
     seen = set()
 
-    cookies_file = os.environ.get("YOUTUBE_COOKIES_FILE", "").strip()
+    cookies_file = os.environ.get(f"{prefix}_COOKIES_FILE", "").strip()
     if cookies_file and Path(cookies_file).exists():
-        sources.append({"label": "YOUTUBE_COOKIES_FILE", "file": cookies_file})
+        sources.append({"label": f"{prefix}_COOKIES_FILE", "file": cookies_file})
 
-    env_names = ["YOUTUBE_COOKIES_TEXT", "YOUTUBE_COOKIES_TEXT_B64"]
+    env_names = [f"{prefix}_COOKIES_TEXT", f"{prefix}_COOKIES_TEXT_B64"]
     for index in range(1, 8):
-        env_names.extend([f"YOUTUBE_COOKIES_TEXT_{index}", f"YOUTUBE_COOKIES_TEXT_B64_{index}"])
+        env_names.extend([f"{prefix}_COOKIES_TEXT_{index}", f"{prefix}_COOKIES_TEXT_B64_{index}"])
 
     for name in env_names:
         raw = decode_cookie_env(name) if name.endswith("_B64") else os.environ.get(name, "")
-        cookies_clean = normalize_cookies_text(raw)
+        cookies_clean = normalize_cookies_text(raw, domains)
         if not cookies_clean:
             continue
         digest = hashlib.sha256(cookies_clean.encode("utf-8")).hexdigest()[:16]
@@ -511,10 +531,19 @@ def youtube_cookie_sources():
         except OSError:
             continue
 
-    if os.environ.get("YOUTUBE_ALLOW_NO_COOKIES_FALLBACK", "1").strip().lower() not in {"0", "false", "no"}:
+    fallback_env = os.environ.get(f"{prefix}_ALLOW_NO_COOKIES_FALLBACK", "1" if allow_no_cookies else "0")
+    if fallback_env.strip().lower() not in {"0", "false", "no"}:
         sources.append({"label": "NO_COOKIES", "file": ""})
 
     return sources or [{"label": "NO_COOKIES", "file": ""}]
+
+
+def youtube_cookie_sources():
+    return platform_cookie_sources("YOUTUBE", ("youtube.com", ".youtube.com", "google.com", ".google.com"))
+
+
+def instagram_cookie_sources():
+    return platform_cookie_sources("INSTAGRAM", ("instagram.com", ".instagram.com"))
 
 
 def youtube_po_tokens():
@@ -619,10 +648,14 @@ def youtube_cookies_text():
 
 
 def youtube_cookie_status():
-    cookies_file = os.environ.get("YOUTUBE_COOKIES_FILE", "")
-    cookies_text_raw = os.environ.get("YOUTUBE_COOKIES_TEXT", "")
-    cookies_b64 = os.environ.get("YOUTUBE_COOKIES_TEXT_B64", "")
     sources = [source for source in youtube_cookie_sources() if source["label"] != "NO_COOKIES"]
+    return platform_cookie_status("YOUTUBE", sources)
+
+
+def platform_cookie_status(prefix, sources):
+    cookies_file = os.environ.get(f"{prefix}_COOKIES_FILE", "")
+    cookies_text_raw = os.environ.get(f"{prefix}_COOKIES_TEXT", "")
+    cookies_b64 = os.environ.get(f"{prefix}_COOKIES_TEXT_B64", "")
     cookies_ready = bool(sources)
     return {
         "cookies_file_configured": bool(cookies_file),
@@ -635,8 +668,16 @@ def youtube_cookie_status():
         "po_token_configured": bool(youtube_po_tokens()),
         "visitor_data_configured": bool(os.environ.get("YOUTUBE_VISITOR_DATA", "").strip()),
         "yt_dlp_version": YTDLP_VERSION,
-        "cookies_problem": "" if cookies_ready else "Set YOUTUBE_COOKIES_TEXT_1, YOUTUBE_COOKIES_TEXT_2, and YOUTUBE_COOKIES_TEXT_3 in Railway backend service variables, then redeploy.",
+        "cookies_problem": "" if cookies_ready else f"Set {prefix}_COOKIES_TEXT_1, {prefix}_COOKIES_TEXT_2, and {prefix}_COOKIES_TEXT_3 in Railway backend service variables, then redeploy.",
     }
+
+
+def instagram_cookie_status():
+    sources = [source for source in instagram_cookie_sources() if source["label"] != "NO_COOKIES"]
+    status = platform_cookie_status("INSTAGRAM", sources)
+    status.pop("po_token_configured", None)
+    status.pop("visitor_data_configured", None)
+    return status
 
 
 def extract_info_safe(url, download=False, extra_opts=None, client="web", cookie_source=None):
@@ -748,6 +789,30 @@ def extract_youtube_video_id(value):
     return None
 
 
+def media_cache_key(url):
+    parsed = urlparse(url)
+    host = parsed.netloc.lower().replace("www.", "")
+    if "instagram.com" in host:
+        match = re.search(r"/(reel|p|tv)/([^/?#]+)/?", parsed.path)
+        if match:
+            return f"instagram:{match.group(1)}:{match.group(2)}"
+    return hashlib.sha256(url.encode("utf-8")).hexdigest()
+
+
+def cache_media_info(url, info):
+    _media_info_cache[media_cache_key(url)] = {"time": time.time(), "info": info}
+
+
+def cached_media_info(url):
+    item = _media_info_cache.get(media_cache_key(url))
+    if not item:
+        return None
+    if time.time() - item["time"] > MEDIA_INFO_CACHE_SECONDS:
+        _media_info_cache.pop(media_cache_key(url), None)
+        return None
+    return item["info"]
+
+
 def safe_file_from_upload(file_storage, kind="image"):
     if not file_storage or not file_storage.filename:
         raise ApiError("Please upload a file.")
@@ -794,8 +859,14 @@ def safe_download_path(filename):
 
 def media_info(url):
     youtube_url = is_youtube_url(url)
+    instagram_url = is_instagram_url(url)
     clients = ["web", "mweb", "tv"] if youtube_url else ["web"]
-    cookie_sources = youtube_cookie_sources() if youtube_url else [{"label": "NO_COOKIES", "file": ""}]
+    if youtube_url:
+        cookie_sources = youtube_cookie_sources()
+    elif instagram_url:
+        cookie_sources = instagram_cookie_sources()
+    else:
+        cookie_sources = [{"label": "NO_COOKIES", "file": ""}]
     attempts = [(cookie_source, client) for cookie_source in cookie_sources for client in clients]
     last_error = None
     for attempt_idx, (cookie_source, client) in enumerate(attempts):
@@ -813,11 +884,16 @@ def media_info(url):
             if youtube_url and is_youtube_block_error(error.message) and attempt_idx < len(attempts) - 1:
                 time.sleep(1)
                 continue
+            if instagram_url and is_auth_block_error(error.message) and attempt_idx < len(attempts) - 1:
+                time.sleep(1)
+                continue
             if attempt_idx < len(attempts) - 1:
                 continue
             raise
     else:
         raise last_error or ApiError("Could not fetch preview.", 400)
+    if is_instagram_url(url):
+        cache_media_info(url, info)
     thumbnail = info.get("thumbnail")
     if not thumbnail and info.get("thumbnails"):
         thumbnail = info["thumbnails"][-1].get("url")
@@ -1866,12 +1942,104 @@ def ytdlp_video_format(quality, has_ffmpeg):
     return f"b[height<={height}]/b", height
 
 
+def best_direct_video_format(info, quality):
+    formats = info.get("formats") or []
+    videos = [
+        item for item in formats
+        if item.get("url")
+        and item.get("vcodec")
+        and item.get("vcodec") != "none"
+        and format_number(item.get("height")) > 0
+    ]
+    requested_height = requested_video_height(quality)
+    if requested_height:
+        limited = [item for item in videos if format_number(item.get("height")) <= requested_height]
+    else:
+        limited = videos
+    selected = max(limited or videos, key=video_format_score, default=None)
+    if selected:
+        return selected
+    if info.get("url"):
+        return info
+    return None
+
+
+def direct_instagram_download_from_cache(url, quality):
+    info = cached_media_info(url)
+    if not info:
+        return None
+    selected = best_direct_video_format(info, quality)
+    if not selected:
+        return None
+    media_url = selected.get("url")
+    headers = {
+        "User-Agent": ytdlp_base_opts()["http_headers"]["User-Agent"],
+        "Referer": info.get("webpage_url") or url,
+        "Accept": "*/*",
+    }
+    headers.update(selected.get("http_headers") or {})
+    title = secure_filename((info.get("title") or "instagram_reel")[:80]) or "instagram_reel"
+    ext = (selected.get("ext") or "mp4").split("-", 1)[0]
+    if ext not in {"mp4", "mov", "webm", "m4v"}:
+        ext = "mp4"
+    path = DOWNLOAD_DIR / f"{make_id()}_{title}.{ext}"
+    try:
+        with requests.get(media_url, headers=headers, timeout=60, stream=True, verify=certifi.where()) as response:
+            response.raise_for_status()
+            with path.open("wb") as handle:
+                for chunk in response.iter_content(chunk_size=1024 * 256):
+                    if chunk:
+                        handle.write(chunk)
+    except requests.exceptions.SSLError:
+        with requests.get(media_url, headers=headers, timeout=60, stream=True, verify=False) as response:
+            response.raise_for_status()
+            with path.open("wb") as handle:
+                for chunk in response.iter_content(chunk_size=1024 * 256):
+                    if chunk:
+                        handle.write(chunk)
+    except Exception:
+        delete_quietly(path)
+        return None
+    if not path.exists() or path.stat().st_size < 1024:
+        delete_quietly(path)
+        return None
+    height = selected.get("height") or info.get("height")
+    note = "Downloaded from the preview session to avoid Instagram login re-checks."
+    if requested_video_height(quality) and height and int(format_number(height)) != requested_video_height(quality):
+        note = f"Downloaded {int(format_number(height))}p from the preview session because Instagram did not expose the requested quality."
+    return {
+        "success": True,
+        "title": info.get("title") or "Instagram reel",
+        "filename": path.name,
+        "file_size": path.stat().st_size,
+        "download_url": public_download_url(path.name),
+        "download_label": "Download video",
+        "note": note,
+        "video_width": selected.get("width") or info.get("width"),
+        "video_height": height,
+        "video_fps": selected.get("fps") or info.get("fps"),
+        "video_codec": selected.get("vcodec") or info.get("vcodec"),
+        "format_id": selected.get("format_id") or info.get("format_id"),
+    }
+
+
 def run_yt_dlp(url, mode, quality="1080"):
+    if mode == "video" and is_instagram_url(url):
+        cached_download = direct_instagram_download_from_cache(url, quality)
+        if cached_download:
+            return cached_download
+
     output_prefix = make_id()
     output_template = str(DOWNLOAD_DIR / f"{output_prefix}_%(title).80s.%(ext)s")
     youtube_url = is_youtube_url(url)
+    instagram_url = is_instagram_url(url)
     clients = ["web", "mweb", "tv"] if youtube_url else ["web"]
-    cookie_sources = youtube_cookie_sources() if youtube_url else [{"label": "NO_COOKIES", "file": ""}]
+    if youtube_url:
+        cookie_sources = youtube_cookie_sources()
+    elif instagram_url:
+        cookie_sources = instagram_cookie_sources()
+    else:
+        cookie_sources = [{"label": "NO_COOKIES", "file": ""}]
     attempts = [(cookie_source, client) for cookie_source in cookie_sources for client in clients]
     last_error = None
     info = None
@@ -1935,6 +2103,10 @@ def run_yt_dlp(url, mode, quality="1080"):
                     last_error = error
                     time.sleep(1)
                     continue
+                if instagram_url and is_auth_block_error(error.message) and attempt_idx < len(attempts) - 1:
+                    last_error = error
+                    time.sleep(1)
+                    continue
                 if mode != "audio" and format_error and attempt_idx < len(attempts) - 1:
                     last_error = error
                     time.sleep(1)
@@ -1965,18 +2137,42 @@ def run_yt_dlp(url, mode, quality="1080"):
                                 "Add 2-3 fresh cookie profiles and optional YOUTUBE_PO_TOKEN/YOUTUBE_VISITOR_DATA, then redeploy.",
                                 429,
                             ) from fallback_error
+                        if instagram_url and is_auth_block_error(fallback_error.message):
+                            status = instagram_cookie_status()
+                            raise ApiError(
+                                f"Instagram is asking this server to log in after {len(attempts)} attempts. "
+                                f"Cookie profiles configured: {status['cookie_profile_count']}. "
+                                "Add 2-3 fresh Instagram cookie profiles in Railway Variables, then redeploy.",
+                                429,
+                            ) from fallback_error
                         raise
                 else:
                     last_error = error
                     if attempt_idx < len(attempts) - 1:
                         time.sleep(1)
                         continue
+                    if instagram_url and is_auth_block_error(error.message):
+                        status = instagram_cookie_status()
+                        raise ApiError(
+                            f"Instagram is asking this server to log in after {len(attempts)} attempts. "
+                            f"Cookie profiles configured: {status['cookie_profile_count']}. "
+                            "Add 2-3 fresh Instagram cookie profiles in Railway Variables, then redeploy.",
+                            429,
+                        ) from error
                     raise
         except Exception as e:
             last_error = e
             if attempt_idx < len(attempts) - 1:
                 time.sleep(1)
                 continue
+            if instagram_url and isinstance(e, ApiError) and is_auth_block_error(e.message):
+                status = instagram_cookie_status()
+                raise ApiError(
+                    f"Instagram is asking this server to log in after {len(attempts)} attempts. "
+                    f"Cookie profiles configured: {status['cookie_profile_count']}. "
+                    "Add 2-3 fresh Instagram cookie profiles in Railway Variables, then redeploy.",
+                    429,
+                ) from e
             raise
     
     if not info or not ydl:
@@ -2285,6 +2481,16 @@ def youtube_status():
         "ffmpeg_path": shutil.which("ffmpeg") or "",
         "yt_dlp_version": YTDLP_VERSION,
         **youtube_cookie_status(),
+    })
+
+
+@app.route("/api/instagram/status")
+def instagram_status():
+    return jsonify({
+        "success": True,
+        "yt_dlp_version": YTDLP_VERSION,
+        "preview_cache_items": len(_media_info_cache),
+        **instagram_cookie_status(),
     })
 
 
