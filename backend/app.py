@@ -40,9 +40,13 @@ if VENDOR_DIR.exists():
     sys.path.insert(0, str(VENDOR_DIR))
 
 try:
+    from rembg import new_session as rembg_new_session
     from rembg import remove as remove_background
-except Exception:
+    _rembg_import_error = ""
+except Exception as error:
     remove_background = None
+    rembg_new_session = None
+    _rembg_import_error = str(error)
 
 try:
     qrcode = importlib.import_module("qrcode")
@@ -124,6 +128,9 @@ SEO_PAGES = [
 SITE_NAME = "ThugTools"
 DEFAULT_IMAGE = "/assets/site-logo.png"
 SITE_DESCRIPTION = "ThugTools is built for creators who do not like waiting."
+REMBG_MODEL_DEFAULT = os.environ.get("REMBG_MODEL", "isnet-general-use").strip() or "isnet-general-use"
+_rembg_sessions = {}
+_rembg_session_lock = threading.Lock()
 
 TOOL_PAGE_SEO = {
     "youtube.html": {
@@ -755,9 +762,7 @@ def pick_preview_video_url(formats):
 def postprocess_cutout(path, feather=2, background="transparent"):
     with Image.open(path) as img:
         rgba = img.convert("RGBA")
-        if feather > 0:
-            alpha = rgba.getchannel("A").filter(ImageFilter.GaussianBlur(feather))
-            rgba.putalpha(alpha)
+        rgba.putalpha(refine_cutout_alpha(rgba.getchannel("A"), feather=feather))
         if background != "transparent":
             colors = {
                 "white": (255, 255, 255, 255),
@@ -768,6 +773,28 @@ def postprocess_cutout(path, feather=2, background="transparent"):
             canvas.alpha_composite(rgba)
             rgba = canvas
         rgba.save(path, "PNG", optimize=True)
+
+
+def refine_cutout_alpha(alpha, feather=1):
+    if feather > 0:
+        alpha = alpha.filter(ImageFilter.GaussianBlur(min(feather, 6) * 0.45))
+    # Clear faint background haze while preserving soft hair/fabric edges.
+    return alpha.point(lambda p: 0 if p < 6 else 255 if p > 250 else p)
+
+
+def cutout_has_useful_alpha(path):
+    try:
+        with Image.open(path) as img:
+            alpha = img.convert("RGBA").getchannel("A")
+            if not alpha.getbbox():
+                return False
+            hist = alpha.histogram()
+            visible = sum(hist[8:])
+            total = alpha.width * alpha.height
+            visible_ratio = visible / max(1, total)
+            return 0.015 <= visible_ratio <= 0.96
+    except Exception:
+        return False
 
 
 def remove_background_fallback(source, out, feather=2, background="transparent", mode="pro"):
@@ -916,8 +943,54 @@ def simple_background_mask(rgb):
     return mask.filter(ImageFilter.MaxFilter(7)).filter(ImageFilter.GaussianBlur(2))
 
 
-def should_use_rembg():
-    return remove_background is not None and os.environ.get("THUGTOOLS_USE_REMBG", "").strip().lower() in {"1", "true", "yes", "on"}
+def removebg_ai_disabled():
+    return os.environ.get("THUGTOOLS_DISABLE_REMBG", "").strip().lower() in {"1", "true", "yes", "on"}
+
+
+def should_use_rembg(mode="ai"):
+    force_ai = os.environ.get("THUGTOOLS_USE_REMBG", "").strip().lower() in {"1", "true", "yes", "on"}
+    return remove_background is not None and not removebg_ai_disabled() and (force_ai or mode in {"ai", "portrait", "product"})
+
+
+def rembg_model_for_mode(mode):
+    if mode == "portrait":
+        return os.environ.get("REMBG_PORTRAIT_MODEL", "u2net_human_seg").strip() or "u2net_human_seg"
+    if mode == "product":
+        return os.environ.get("REMBG_PRODUCT_MODEL", "isnet-general-use").strip() or "isnet-general-use"
+    return REMBG_MODEL_DEFAULT
+
+
+def get_rembg_session(model_name):
+    if rembg_new_session is None:
+        return None
+    with _rembg_session_lock:
+        if model_name not in _rembg_sessions:
+            app.logger.info(f"Loading rembg model session: {model_name}")
+            _rembg_sessions[model_name] = rembg_new_session(model_name)
+        return _rembg_sessions[model_name]
+
+
+def remove_background_ai(source, out, feather=1, background="transparent", mode="ai"):
+    data = source.read_bytes()
+    model_name = rembg_model_for_mode(mode)
+    session = get_rembg_session(model_name)
+    kwargs = {
+        "alpha_matting": True,
+        "alpha_matting_foreground_threshold": 240,
+        "alpha_matting_background_threshold": 10,
+        "alpha_matting_erode_size": 6 if mode == "portrait" else 8,
+    }
+    if session is not None:
+        kwargs["session"] = session
+    try:
+        result = remove_background(data, **kwargs)
+    except TypeError:
+        kwargs.pop("session", None)
+        result = remove_background(data, **kwargs)
+    out.write_bytes(result)
+    if not cutout_has_useful_alpha(out):
+        raise ApiError("AI cutout returned an empty or invalid mask.", 500)
+    postprocess_cutout(out, feather=feather, background=background)
 
 
 def require_ffmpeg():
@@ -2359,28 +2432,23 @@ def image_removebg():
         feather = int(request.form.get("feather", 2))
         feather = max(0, min(feather, 8))
         background = request.form.get("background", "transparent")
-        mode = request.form.get("mode", "pro")
-        if mode not in {"pro", "fast"}:
-            mode = "pro"
-        if should_use_rembg():
+        mode = request.form.get("mode", "ai")
+        if mode not in {"ai", "portrait", "product", "pro", "fast"}:
+            mode = "ai"
+        if should_use_rembg(mode):
             try:
-                app.logger.info(f"Processing removebg for {source.name}, file size: {source.stat().st_size} bytes")
-                result = remove_background(
-                    source.read_bytes(),
-                    alpha_matting=True,
-                    alpha_matting_foreground_threshold=240,
-                    alpha_matting_background_threshold=10,
-                    alpha_matting_erode_size=8,
-                )
-                out.write_bytes(result)
-                postprocess_cutout(out, feather=feather, background=background)
+                app.logger.info(f"Processing AI removebg for {source.name}, model={rembg_model_for_mode(mode)}, file size={source.stat().st_size} bytes")
+                remove_background_ai(source, out, feather=feather, background=background, mode=mode)
                 app.logger.info(f"RemoveBG succeeded: {out.name}")
             except Exception as e:
                 app.logger.exception(f"rembg failed ({str(e)[:100]}); using local fallback")
-                remove_background_fallback(source, out, feather=feather, background=background, mode=mode)
+                remove_background_fallback(source, out, feather=feather, background=background, mode="pro")
         else:
-            app.logger.info("using local removebg fallback")
-            remove_background_fallback(source, out, feather=feather, background=background, mode=mode)
+            if remove_background is None:
+                app.logger.warning(f"rembg unavailable ({_rembg_import_error}); using local fallback")
+            else:
+                app.logger.info("using local removebg fallback")
+            remove_background_fallback(source, out, feather=feather, background=background, mode="fast" if mode == "fast" else "pro")
         return jsonify(image_response(out, "Download PNG image"))
     except Exception as e:
         app.logger.exception(f"RemoveBG endpoint error: {str(e)[:200]}")

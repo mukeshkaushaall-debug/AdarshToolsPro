@@ -3,6 +3,7 @@ backend/vendor/
 backend/__pycache__/
 backend/uploads/*
 backend/downloads/*
+backend/models/
 backend/server.out.log
 backend/server.err.log
 *.pyc

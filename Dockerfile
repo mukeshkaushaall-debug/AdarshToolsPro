@@ -3,6 +3,8 @@ FROM python:3.11-slim
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     PIP_NO_CACHE_DIR=1 \
+    U2NET_HOME=/app/backend/models/rembg \
+    REMBG_MODEL=isnet-general-use \
     PORT=5000
 
 WORKDIR /app
@@ -14,6 +16,10 @@ RUN apt-get update \
 COPY backend/requirements.txt /app/backend/requirements.txt
 RUN pip install --upgrade pip \
     && pip install -r /app/backend/requirements.txt
+
+RUN mkdir -p /app/backend/models/rembg \
+    && python -c "from rembg import new_session; new_session('isnet-general-use')" \
+    || true
 
 COPY . /app
 
