@@ -167,7 +167,11 @@ async function fetchWithTimeout(url, options = {}, timeoutMs = 90000) {
     return await fetch(url, { ...options, signal: controller.signal });
   } catch (error) {
     if (error.name === "AbortError") {
-      throw new Error("Request timed out. Please try a smaller file or restart the server.");
+      const isRemoveBg = url.includes("/api/image/removebg");
+      const message = isRemoveBg 
+        ? "Processing taking too long. The AI model may still be downloading. Please try again in a moment."
+        : "Request timed out. Please try a smaller file or restart the server.";
+      throw new Error(message);
     }
     throw new Error("Could not reach the server. Make sure Flask is running on port 5000.");
   } finally {
@@ -245,7 +249,8 @@ async function postJSON(url, body) {
 }
 
 async function postForm(url, formData) {
-  const res = await fetchWithTimeout(API_BASE + url, { method: "POST", body: formData });
+  const timeoutMs = url.includes("/api/image/removebg") ? 180000 : 90000;
+  const res = await fetchWithTimeout(API_BASE + url, { method: "POST", body: formData }, timeoutMs);
   return parseJSONResponse(res);
 }
 

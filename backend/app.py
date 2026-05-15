@@ -2213,6 +2213,7 @@ def image_removebg():
         background = request.form.get("background", "transparent")
         if remove_background is not None:
             try:
+                app.logger.info(f"Processing removebg for {source.name}, file size: {source.stat().st_size} bytes")
                 result = remove_background(
                     source.read_bytes(),
                     alpha_matting=True,
@@ -2222,12 +2223,17 @@ def image_removebg():
                 )
                 out.write_bytes(result)
                 postprocess_cutout(out, feather=feather, background=background)
-            except Exception:
-                app.logger.exception("rembg failed; using local fallback")
+                app.logger.info(f"RemoveBG succeeded: {out.name}")
+            except Exception as e:
+                app.logger.exception(f"rembg failed ({str(e)[:100]}); using local fallback")
                 remove_background_fallback(source, out, feather=feather, background=background)
         else:
+            app.logger.info("rembg not available; using local fallback")
             remove_background_fallback(source, out, feather=feather, background=background)
         return jsonify(image_response(out, "Download PNG image"))
+    except Exception as e:
+        app.logger.exception(f"RemoveBG endpoint error: {str(e)[:200]}")
+        raise
     finally:
         delete_quietly(source)
 
