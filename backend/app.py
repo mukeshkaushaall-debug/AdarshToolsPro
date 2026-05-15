@@ -1821,6 +1821,7 @@ def healthz():
         "status": "ok",
         "removebg_model": REMBG_MODEL_DEFAULT,
         "removebg_max_side": REMBG_MAX_SIDE,
+        "removebg_warmup_probe": max(128, min(REMBG_MAX_SIDE, 512)),
         "removebg_ready": REMBG_MODEL_DEFAULT in _rembg_sessions,
     })
 
