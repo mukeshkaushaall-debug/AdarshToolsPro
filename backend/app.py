@@ -838,6 +838,26 @@ def remove_background_ai(source, out, feather=1, background="transparent", mode=
     postprocess_cutout(out, feather=feather, background=background)
 
 
+def warm_removebg_model():
+    if os.environ.get("REMBG_WARMUP", "1").strip().lower() in {"0", "false", "no", "off"}:
+        return
+    if remove_background is None:
+        app.logger.warning(f"RemoveBG warmup skipped: {_rembg_import_error}")
+        return
+    try:
+        session = get_rembg_session(REMBG_MODEL_DEFAULT)
+        probe = Image.new("RGBA", (64, 64), (255, 255, 255, 255))
+        draw = ImageDraw.Draw(probe)
+        draw.ellipse((18, 12, 46, 46), fill=(37, 99, 235, 255))
+        remove_background(probe, session=session, post_process_mask=True)
+        app.logger.info(f"RemoveBG model warmed: {REMBG_MODEL_DEFAULT}")
+    except Exception as error:
+        app.logger.exception(f"RemoveBG warmup failed: {str(error)[:200]}")
+
+
+warm_removebg_model()
+
+
 def require_ffmpeg():
     ffmpeg = shutil.which("ffmpeg")
     if not ffmpeg:
