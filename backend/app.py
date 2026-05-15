@@ -121,7 +121,8 @@ SEO_PAGES = [
 ]
 
 SITE_NAME = "ThugTools"
-DEFAULT_IMAGE = "/assets/remove-bg-logo.png"
+DEFAULT_IMAGE = "/assets/site-logo.png"
+SITE_DESCRIPTION = "ThugTools is built for creators who do not like waiting."
 
 TOOL_PAGE_SEO = {
     "youtube.html": {
@@ -781,6 +782,10 @@ def remove_background_fallback(source, out, feather=2, background="transparent")
         rgba.putalpha(mask)
         rgba.save(out, "PNG", optimize=True)
     postprocess_cutout(out, feather=feather, background=background)
+
+
+def should_use_rembg():
+    return remove_background is not None and os.environ.get("THUGTOOLS_USE_REMBG", "").strip().lower() in {"1", "true", "yes", "on"}
 
 
 def require_ffmpeg():
@@ -1529,15 +1534,15 @@ def base_schema_graph(path="/", title=None, description=None):
     url = absolute_url(path)
     image = absolute_url(DEFAULT_IMAGE)
     title = title or SITE_NAME
-    description = description or "Free online creator tools for video, image, PDF, QR, and business workflows."
+    description = description or SITE_DESCRIPTION
     return [
         {
             "@type": "Organization",
             "@id": absolute_url("/#organization"),
             "name": SITE_NAME,
             "url": absolute_url("/"),
-            "logo": {"@type": "ImageObject", "url": image},
-            "description": "Free online creator tools for media downloads, image editing, PDFs, QR codes, and business documents.",
+            "logo": {"@type": "ImageObject", "url": image, "width": 512, "height": 512},
+            "description": SITE_DESCRIPTION,
             "contactPoint": {"@type": "ContactPoint", "email": "thugtoolscontact@gmail.com", "contactType": "customer support"},
         },
         {
@@ -1613,6 +1618,8 @@ def inject_meta_and_schema(html, filename):
         html = html.replace("  <meta name=\"robots\"", f"  <meta name=\"keywords\" content=\"{keywords_attr}\">\n  <meta name=\"robots\"", 1)
     if 'name="author"' not in html:
         html = html.replace("  <meta name=\"robots\"", f"  <meta name=\"author\" content=\"{SITE_NAME}\">\n  <meta name=\"robots\"", 1)
+    if 'rel="icon"' not in html:
+        html = html.replace("</head>", '  <link rel="icon" href="/favicon.ico" sizes="any">\n  <link rel="icon" type="image/svg+xml" href="/favicon.svg">\n  <link rel="apple-touch-icon" href="/assets/site-logo.png">\n</head>', 1)
     if 'rel="preload" href="../style.css"' not in html and "../style.css" in html:
         html = html.replace('  <link rel="stylesheet" href="../style.css">', '  <link rel="preload" href="../style.css" as="style">\n  <link rel="stylesheet" href="../style.css">', 1)
     if 'rel="preload" href="style.css"' not in html and 'href="style.css"' in html:
@@ -1684,6 +1691,12 @@ def seo_html(filename, subdir=None):
         lambda match: f'{match.group(1)}{absolute_url(match.group(2))}{match.group(3)}',
         html,
     )
+    html = re.sub(
+        r'(<meta (?:property="og:image"|name="twitter:image") content=")[^"]*remove-bg-logo\.png(")',
+        lambda match: f"{match.group(1)}{absolute_url(DEFAULT_IMAGE)}{match.group(2)}",
+        html,
+        flags=re.IGNORECASE,
+    )
     html = inject_meta_and_schema(html, filename)
     html = enrich_tool_body(html, filename)
     return Response(html, mimetype="text/html")
@@ -1747,7 +1760,10 @@ def youtube_status():
 
 @app.route("/favicon.ico")
 def favicon():
-    return "", 204
+    ico_path = FRONTEND_DIR / "favicon.ico"
+    if ico_path.exists():
+        return send_file(ico_path, mimetype="image/x-icon")
+    return send_from_directory(FRONTEND_DIR, "favicon.svg", mimetype="image/svg+xml")
 
 
 # Clean URL routes for SEO-friendly tool pages
@@ -2211,7 +2227,7 @@ def image_removebg():
         feather = int(request.form.get("feather", 2))
         feather = max(0, min(feather, 8))
         background = request.form.get("background", "transparent")
-        if remove_background is not None:
+        if should_use_rembg():
             try:
                 app.logger.info(f"Processing removebg for {source.name}, file size: {source.stat().st_size} bytes")
                 result = remove_background(
@@ -2228,7 +2244,7 @@ def image_removebg():
                 app.logger.exception(f"rembg failed ({str(e)[:100]}); using local fallback")
                 remove_background_fallback(source, out, feather=feather, background=background)
         else:
-            app.logger.info("rembg not available; using local fallback")
+            app.logger.info("using local removebg fallback")
             remove_background_fallback(source, out, feather=feather, background=background)
         return jsonify(image_response(out, "Download PNG image"))
     except Exception as e:

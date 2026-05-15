@@ -1,4 +1,4 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="256" height="256" viewBox="0 0 256 256" role="img" aria-label="ThugTools logo">
+<svg xmlns="http://www.w3.org/2000/svg" width="256" height="256" viewBox="0 0 256 256" role="img" aria-label="ThugTools T logo">
   <defs>
     <linearGradient id="g" x1="32" x2="224" y1="24" y2="232" gradientUnits="userSpaceOnUse">
       <stop stop-color="#2563eb"/>
@@ -10,6 +10,6 @@
       <feDropShadow dx="0" dy="18" stdDeviation="18" flood-color="#2563eb" flood-opacity=".24"/>
     </filter>
   </defs>
-  <rect width="256" height="256" rx="64" fill="url(#g)" filter="url(#s)"/>
-  <path fill="#fff" d="M128 49c8 0 15 4 19 12l55 126c5 11-3 23-15 23h-18c-7 0-13-4-15-10l-8-20H88l-8 20c-2 6-8 10-15 10H47c-12 0-20-12-15-23L87 61c4-8 11-12 19-12h22Zm0 59-24 58h48l-24-58Z"/>
+  <circle cx="128" cy="128" r="120" fill="url(#g)" filter="url(#s)"/>
+  <path fill="#fff" d="M61 62h134v37h-48v96h-38V99H61V62Z"/>
 </svg>
