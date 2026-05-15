@@ -1814,7 +1814,13 @@ def sitemap_xml():
 
 @app.route("/healthz")
 def healthz():
-    return jsonify({"success": True, "status": "ok"})
+    return jsonify({
+        "success": True,
+        "status": "ok",
+        "removebg_model": REMBG_MODEL_DEFAULT,
+        "removebg_max_side": REMBG_MAX_SIDE,
+        "removebg_ready": REMBG_MODEL_DEFAULT in _rembg_sessions,
+    })
 
 
 @app.route("/api/youtube/status")
