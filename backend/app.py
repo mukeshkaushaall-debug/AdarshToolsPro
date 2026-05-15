@@ -128,7 +128,7 @@ SITE_NAME = "ThugTools"
 DEFAULT_IMAGE = "/assets/site-logo.png"
 SITE_DESCRIPTION = "ThugTools is built for creators who do not like waiting."
 REMBG_MODEL_DEFAULT = os.environ.get("REMBG_MODEL", "u2net").strip() or "u2net"
-REMBG_MAX_SIDE = int(os.environ.get("REMBG_MAX_SIDE", "1800"))
+REMBG_MAX_SIDE = int(os.environ.get("REMBG_MAX_SIDE", "768"))
 _rembg_sessions = {}
 _rembg_session_lock = threading.Lock()
 
@@ -798,10 +798,6 @@ def cutout_has_useful_alpha(path):
 
 
 def rembg_model_for_mode(mode):
-    if mode == "portrait":
-        return os.environ.get("REMBG_PORTRAIT_MODEL", "u2net_human_seg").strip() or "u2net_human_seg"
-    if mode == "product":
-        return os.environ.get("REMBG_PRODUCT_MODEL", "isnet-general-use").strip() or "isnet-general-use"
     return REMBG_MODEL_DEFAULT
 
 
@@ -826,18 +822,7 @@ def remove_background_ai(source, out, feather=1, background="transparent", mode=
     model_name = rembg_model_for_mode(mode)
     session = get_rembg_session(model_name)
     kwargs = {"session": session, "post_process_mask": True} if session is not None else {"post_process_mask": True}
-    try:
-        result = remove_background(
-            working,
-            **kwargs,
-            alpha_matting=True,
-            alpha_matting_foreground_threshold=240,
-            alpha_matting_background_threshold=20,
-            alpha_matting_erode_size=8,
-        )
-    except Exception as alpha_error:
-        app.logger.warning(f"alpha matting failed; retrying AI mask without matting: {str(alpha_error)[:140]}")
-        result = remove_background(working, **kwargs)
+    result = remove_background(working, **kwargs)
     if isinstance(result, (bytes, bytearray)):
         with Image.open(io.BytesIO(result)) as result_img:
             cutout = result_img.convert("RGBA")
@@ -2293,8 +2278,7 @@ def image_removebg():
         feather = max(0, min(feather, 8))
         background = request.form.get("background", "transparent")
         mode = request.form.get("mode", "ai")
-        if mode not in {"ai", "portrait", "product"}:
-            mode = "ai"
+        mode = "ai"
         app.logger.info(f"Processing AI removebg for {source.name}, model={rembg_model_for_mode(mode)}, file size={source.stat().st_size} bytes")
         remove_background_ai(source, out, feather=feather, background=background, mode=mode)
         app.logger.info(f"RemoveBG succeeded: {out.name}")

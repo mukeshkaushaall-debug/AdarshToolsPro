@@ -156,7 +156,7 @@ async function parseJSONResponse(res) {
   } catch {
     throw new Error(text ? text.slice(0, 180) : "Server returned an empty response.");
   }
-  if (!res.ok || !data.success) throw new Error(data.error || "Request failed");
+  if (!res.ok || !data.success) throw new Error(data.error || data.message || data.detail || `Request failed (${res.status})`);
   return data;
 }
 

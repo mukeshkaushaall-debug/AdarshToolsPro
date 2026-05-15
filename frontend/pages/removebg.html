@@ -28,7 +28,7 @@
     <form class="form-stack" data-upload-form data-endpoint="/api/image/removebg">
       <label class="upload-zone"><input type="file" name="file" accept="image/*" required><div><div data-icon="upload"></div><h3>Drop image here</h3><p data-file-name>or tap to browse</p></div></label>
       <select name="background"><option value="transparent">Transparent PNG</option><option value="white">White background</option><option value="black">Dark background</option><option value="blue">Blue studio background</option></select>
-      <select name="mode"><option value="ai">Auto AI cutout</option><option value="portrait">Portrait AI</option><option value="product">Product AI</option></select>
+      <input type="hidden" name="mode" value="ai">
       <label>Edge softness <input type="range" name="feather" min="0" max="8" value="1"></label>
       <button class="btn" type="submit">Remove background</button><div class="progress-wrap"><div class="progress-bar"></div></div><div class="preview-grid"><div class="preview-card"><span>Before</span><div data-before></div></div><div class="preview-card"><span>After</span><div data-after></div></div></div><div class="result-box" data-result></div>
     </form>
