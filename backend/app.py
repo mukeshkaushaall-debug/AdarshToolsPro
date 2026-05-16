@@ -29,6 +29,8 @@ from yt_dlp import YoutubeDL
 from yt_dlp.version import __version__ as YTDLP_VERSION
 from yt_dlp.utils import DownloadError
 
+from instagram_reel import filter_by_quality, resolve_instagram_media
+
 BASE_DIR = Path(__file__).resolve().parent
 PROJECT_DIR = BASE_DIR.parent
 FRONTEND_DIR = PROJECT_DIR / "frontend"
@@ -857,14 +859,81 @@ def safe_download_path(filename):
     return file_path
 
 
+def instagram_media_info(url):
+    try:
+        resolved = resolve_instagram_media(url)
+        best = resolved["candidates"][0]
+        height = int(best.get("height") or 720)
+        return {
+            "success": True,
+            "title": resolved["title"],
+            "uploader": "instagram.com",
+            "duration": None,
+            "duration_text": "",
+            "thumbnail": "",
+            "preview_video_url": best["url"],
+            "width": None,
+            "height": height,
+            "aspect_ratio": 9 / 16,
+            "webpage_url": resolved["webpage_url"],
+        }
+    except Exception:
+        return social_preview_fallback(url, "")
+
+
+def download_instagram_reel(url, quality):
+    resolved = resolve_instagram_media(url)
+    candidates = filter_by_quality(resolved["candidates"], quality)
+    title = secure_filename(resolved["title"][:80]) or "instagram_reel"
+    referer = resolved["webpage_url"]
+    note = "Downloaded from public Instagram media (no login cookies)."
+
+    for pick in candidates[:8]:
+        media_url = pick.get("url")
+        if not media_url:
+            continue
+        path = DOWNLOAD_DIR / f"{make_id()}_{title}.mp4"
+        headers = {
+            "User-Agent": ytdlp_base_opts()["http_headers"]["User-Agent"],
+            "Referer": referer,
+            "Accept": "*/*",
+        }
+        if not download_media_stream(media_url, headers, path):
+            continue
+        if not file_has_audio_stream(path):
+            delete_quietly(path)
+            continue
+
+        picked_height = int(pick.get("height") or 0)
+        requested = requested_video_height(quality)
+        if requested and picked_height and picked_height != requested:
+            note = f"Downloaded {picked_height}p because {requested}p was not available."
+
+        return {
+            "success": True,
+            "title": resolved["title"],
+            "filename": path.name,
+            "file_size": path.stat().st_size,
+            "download_url": public_download_url(path.name),
+            "download_label": "Download video",
+            "note": note,
+            "video_height": picked_height or None,
+        }
+
+    raise ApiError(
+        "Could not download this Instagram reel with audio. Use a public reel link, "
+        "or set COBALT_API_URL on the server for an automatic fallback.",
+        400,
+    )
+
+
 def media_info(url):
+    if is_instagram_url(url):
+        return instagram_media_info(url)
     youtube_url = is_youtube_url(url)
-    instagram_url = is_instagram_url(url)
     clients = ["web", "mweb", "tv"] if youtube_url else ["web"]
     if youtube_url:
         cookie_sources = youtube_cookie_sources()
-    elif instagram_url:
-        cookie_sources = instagram_cookie_sources()
     else:
         cookie_sources = [{"label": "NO_COOKIES", "file": ""}]
     attempts = [(cookie_source, client) for cookie_source in cookie_sources for client in clients]
@@ -884,16 +953,11 @@ def media_info(url):
             if youtube_url and is_youtube_block_error(error.message) and attempt_idx < len(attempts) - 1:
                 time.sleep(1)
                 continue
-            if instagram_url and is_auth_block_error(error.message) and attempt_idx < len(attempts) - 1:
-                time.sleep(1)
-                continue
             if attempt_idx < len(attempts) - 1:
                 continue
             raise
     else:
         raise last_error or ApiError("Could not fetch preview.", 400)
-    if is_instagram_url(url):
-        cache_media_info(url, info)
     thumbnail = info.get("thumbnail")
     if not thumbnail and info.get("thumbnails"):
         thumbnail = info["thumbnails"][-1].get("url")
@@ -2288,11 +2352,6 @@ def direct_instagram_download_from_cache(url, quality):
 
 
 def run_yt_dlp(url, mode, quality="1080"):
-    if mode == "video" and is_instagram_url(url):
-        cached_download = direct_instagram_download_from_cache(url, quality)
-        if cached_download:
-            return cached_download
-
     output_prefix = make_id()
     output_template = str(DOWNLOAD_DIR / f"{output_prefix}_%(title).80s.%(ext)s")
     youtube_url = is_youtube_url(url)
@@ -2792,9 +2851,11 @@ def youtube_status():
 def instagram_status():
     return jsonify({
         "success": True,
-        "yt_dlp_version": YTDLP_VERSION,
-        "preview_cache_items": len(_media_info_cache),
-        **instagram_cookie_status(),
+        "method": "public_scrape",
+        "cookies_required": False,
+        "cobalt_fallback": bool(os.environ.get("COBALT_API_URL", "").strip()),
+        "ffmpeg": bool(shutil.which("ffmpeg")),
+        "ffprobe": bool(ffprobe_path()),
     })
 
 
@@ -3064,7 +3125,7 @@ def instagram_download():
     data = request.get_json(silent=True) or request.form
     url = clean_url(data.get("url"))
     quality = data.get("quality", "best")
-    return jsonify(run_yt_dlp(url, "video", quality))
+    return jsonify(download_instagram_reel(url, quality))
 
 
 @app.post("/api/download/pinterest")
