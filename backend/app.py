@@ -31,6 +31,7 @@ from yt_dlp.utils import DownloadError
 
 from instagram_downloader import download_instagram, probe_instagram
 from preview_utils import pick_preview_stream_pair, pick_preview_video_url
+from youtube_resolver import fetch_youtube_info
 
 BASE_DIR = Path(__file__).resolve().parent
 PROJECT_DIR = BASE_DIR.parent
@@ -106,6 +107,10 @@ FONT_DIR = Path(os.environ.get("WINDIR", "C:\\Windows")) / "Fonts"
 RUNTIME_COOKIES_DIR = Path(os.environ.get("TMPDIR", BASE_DIR)) / "youtube_cookies"
 RUNTIME_COOKIES_DIR.mkdir(parents=True, exist_ok=True)
 YOUTUBE_COOKIES_HELP = "YouTube is blocking this server. Add fresh YouTube cookies, or add multiple rotated profiles as YOUTUBE_COOKIES_TEXT_1, YOUTUBE_COOKIES_TEXT_2, and YOUTUBE_COOKIES_TEXT_3 in Railway Variables, then redeploy."
+YOUTUBE_BLOCK_HELP = (
+    "YouTube blocked a direct request from this server. Retrying through alternate APIs (no login cookies). "
+    "If it still fails, redeploy on a new Railway region or set COBALT_API_URL for a self-hosted Cobalt instance."
+)
 INSTAGRAM_COOKIES_HELP = "Instagram is asking this server to log in. Add fresh Instagram cookies as INSTAGRAM_COOKIES_TEXT_1, INSTAGRAM_COOKIES_TEXT_2, and INSTAGRAM_COOKIES_TEXT_3 in Railway Variables, then redeploy."
 SEO_PAGES = [
     ("/", "daily", "1.0"),
@@ -425,7 +430,9 @@ def simplify_download_error(message):
     msg = re.sub(r"\s+", " ", message or "").strip()
     lowered = msg.lower()
     if ("confirm you" in lowered and "bot" in lowered) or ("automated" in lowered and "traffic" in lowered):
-        return YOUTUBE_COOKIES_HELP
+        if os.environ.get("YOUTUBE_USE_COOKIES", "0").strip().lower() in {"1", "true", "yes"}:
+            return YOUTUBE_COOKIES_HELP
+        return YOUTUBE_BLOCK_HELP
     if "sign in to confirm" in lowered or "login" in lowered or "private" in lowered:
         return "This video needs login or is private. Try a public link."
     if "certificate_verify_failed" in lowered or "certificate verify failed" in lowered or "ssl" in lowered:
@@ -546,7 +553,13 @@ def platform_cookie_sources(prefix, domains, allow_no_cookies=True):
     return sources or [{"label": "NO_COOKIES", "file": ""}]
 
 
+def youtube_use_cookies():
+    return os.environ.get("YOUTUBE_USE_COOKIES", "0").strip().lower() in {"1", "true", "yes"}
+
+
 def youtube_cookie_sources():
+    if not youtube_use_cookies():
+        return [{"label": "NO_COOKIES", "file": ""}]
     return platform_cookie_sources("YOUTUBE", ("youtube.com", ".youtube.com", "google.com", ".google.com"))
 
 
@@ -585,7 +598,14 @@ def youtube_extractor_args(client):
     if tokens:
         youtube_args["po_token"] = tokens
 
-    return {"youtube": youtube_args, "youtubetab": {"skip": ["webpage"]}}
+    extractor_args = {"youtube": youtube_args, "youtubetab": {"skip": ["webpage"]}}
+    pot_base = (
+        os.environ.get("BGUTIL_POT_BASE_URL", "").strip()
+        or os.environ.get("BGUTIL_BASE_URL", "http://127.0.0.1:4416").strip()
+    )
+    if pot_base and os.environ.get("YOUTUBE_DISABLE_BGUTIL", "0").strip().lower() not in {"1", "true", "yes"}:
+        extractor_args["youtubepot-bgutilhttp"] = {"base_url": [pot_base]}
+    return extractor_args
 
 
 def ytdlp_base_opts(client="web", cookie_source=None):
@@ -656,6 +676,19 @@ def youtube_cookies_text():
 
 
 def youtube_cookie_status():
+    if not youtube_use_cookies():
+        status = platform_cookie_status("YOUTUBE", [])
+        status["cookieless_mode"] = True
+        status["cookies_ready"] = True
+        status["cookie_profile_count"] = 0
+        status["cookie_profiles"] = ["NO_COOKIES"]
+        status["cookies_problem"] = ""
+        status["bgutil_pot_url"] = (
+            os.environ.get("BGUTIL_POT_BASE_URL", "").strip()
+            or os.environ.get("BGUTIL_BASE_URL", "http://127.0.0.1:4416").strip()
+        )
+        status["resolver_fallbacks"] = ["invidious", "piped", "cobalt"]
+        return status
     sources = [source for source in youtube_cookie_sources() if source["label"] != "NO_COOKIES"]
     return platform_cookie_status("YOUTUBE", sources)
 
@@ -916,13 +949,14 @@ def media_info(url):
     if is_instagram_url(url):
         return instagram_media_info(url)
     youtube_url = is_youtube_url(url)
-    clients = ["web", "mweb", "tv"] if youtube_url else ["web"]
+    clients = ["ios", "mweb", "tv", "web_creator", "web"] if youtube_url else ["web"]
     if youtube_url:
         cookie_sources = youtube_cookie_sources()
     else:
         cookie_sources = [{"label": "NO_COOKIES", "file": ""}]
     attempts = [(cookie_source, client) for cookie_source in cookie_sources for client in clients]
     last_error = None
+    info = None
     for attempt_idx, (cookie_source, client) in enumerate(attempts):
         try:
             info, _ = extract_info_safe(
@@ -940,8 +974,16 @@ def media_info(url):
                 continue
             if attempt_idx < len(attempts) - 1:
                 continue
-            raise
-    else:
+            break
+    if not info and youtube_url:
+        try:
+            info = fetch_youtube_info(url)
+        except Exception as error:
+            raise last_error or ApiError(
+                f"Could not fetch YouTube preview. {error}",
+                400,
+            ) from error
+    if not info:
         raise last_error or ApiError("Could not fetch preview.", 400)
     thumbnail = info.get("thumbnail")
     if not thumbnail and info.get("thumbnails"):
@@ -952,6 +994,9 @@ def media_info(url):
     width = info.get("width")
     height = info.get("height")
     aspect_ratio = round(width / height, 4) if width and height else 16 / 9
+    resolver_note = ""
+    if str(info.get("extractor", "")).startswith("youtube_resolver"):
+        resolver_note = "Loaded via alternate API — no YouTube login cookies required."
     return {
         "success": True,
         "title": info.get("title") or "Media preview",
@@ -964,6 +1009,7 @@ def media_info(url):
         "height": height,
         "aspect_ratio": aspect_ratio,
         "webpage_url": info.get("webpage_url") or url,
+        "preview_note": resolver_note,
     }
 
 
@@ -2388,12 +2434,78 @@ def direct_instagram_download_from_cache(url, quality):
     }
 
 
+def download_youtube_via_resolver(url, quality):
+    """Download YouTube video through Invidious/Piped/Cobalt when yt-dlp is blocked."""
+    info = fetch_youtube_info(url)
+    cache_media_info(url, info)
+    has_ffmpeg = shutil.which("ffmpeg") is not None
+    video_fmt, audio_fmt = pick_instagram_direct_formats(info, quality, has_ffmpeg)
+    if not video_fmt:
+        raise ApiError("This video has no downloadable streams on alternate APIs. Try again in a minute.", 400)
+
+    file_id = make_id()
+    title = secure_filename((info.get("title") or "youtube_video")[:80]) or "youtube_video"
+    path = DOWNLOAD_DIR / f"{file_id}_{title}.mp4"
+    temp_paths = []
+    source = info.get("extractor", "alternate-api").replace("youtube_resolver:", "")
+
+    try:
+        if audio_fmt:
+            video_ext = (video_fmt.get("ext") or "mp4").split("-", 1)[0]
+            audio_ext = (audio_fmt.get("ext") or "m4a").split("-", 1)[0]
+            video_temp = DOWNLOAD_DIR / f"{file_id}_video.{video_ext}"
+            audio_temp = DOWNLOAD_DIR / f"{file_id}_audio.{audio_ext}"
+            temp_paths.extend([video_temp, audio_temp])
+            if not download_media_stream(
+                video_fmt.get("url"),
+                media_download_headers(info, url, video_fmt),
+                video_temp,
+            ):
+                raise ApiError("Could not download video stream.", 400)
+            if not download_media_stream(
+                audio_fmt.get("url"),
+                media_download_headers(info, url, audio_fmt),
+                audio_temp,
+            ):
+                raise ApiError("Could not download audio stream.", 400)
+            if not ffmpeg_merge_video_audio(video_temp, audio_temp, path):
+                raise ApiError("FFmpeg could not merge video and audio.", 500)
+        else:
+            if not download_media_stream(
+                video_fmt.get("url"),
+                media_download_headers(info, url, video_fmt),
+                path,
+            ):
+                raise ApiError("Could not download video stream.", 400)
+    finally:
+        for temp_path in temp_paths:
+            delete_quietly(temp_path)
+
+    if not path.exists() or path.stat().st_size < 1024:
+        delete_quietly(path)
+        raise ApiError("Download finished but the output file was empty.", 500)
+
+    height = video_fmt.get("height") or info.get("height")
+    note = f"Downloaded via {source} API (no YouTube cookies required)."
+    return {
+        "success": True,
+        "title": info.get("title") or "YouTube video",
+        "filename": path.name,
+        "file_size": path.stat().st_size,
+        "download_url": public_download_url(path.name),
+        "download_label": "Download video",
+        "note": note,
+        "video_height": height,
+        "video_width": video_fmt.get("width") or info.get("width"),
+    }
+
+
 def run_yt_dlp(url, mode, quality="1080"):
     output_prefix = make_id()
     output_template = str(DOWNLOAD_DIR / f"{output_prefix}_%(title).80s.%(ext)s")
     youtube_url = is_youtube_url(url)
     instagram_url = is_instagram_url(url)
-    clients = ["web", "mweb", "tv"] if youtube_url else ["web"]
+    clients = ["ios", "mweb", "tv", "web_creator", "web"] if youtube_url else ["web"]
     if youtube_url:
         cookie_sources = youtube_cookie_sources()
     elif instagram_url:
@@ -2512,14 +2624,9 @@ def run_yt_dlp(url, mode, quality="1080"):
                         if attempt_idx < len(attempts) - 1:
                             time.sleep(1)
                             continue
-                        if is_youtube_block_error(fallback_error.message):
-                            status = youtube_cookie_status()
-                            raise ApiError(
-                                f"YouTube is blocking this server after {len(attempts)} attempts. "
-                                f"Cookie profiles configured: {status['cookie_profile_count']}. "
-                                "Add 2-3 fresh cookie profiles and optional YOUTUBE_PO_TOKEN/YOUTUBE_VISITOR_DATA, then redeploy.",
-                                429,
-                            ) from fallback_error
+                        if youtube_url and is_youtube_block_error(fallback_error.message):
+                            last_error = fallback_error
+                            break
                         if instagram_url and is_auth_block_error(fallback_error.message):
                             status = instagram_cookie_status()
                             raise ApiError(
@@ -2542,6 +2649,9 @@ def run_yt_dlp(url, mode, quality="1080"):
                             "Add 2-3 fresh Instagram cookie profiles in Railway Variables, then redeploy.",
                             429,
                         ) from error
+                    if youtube_url:
+                        last_error = error
+                        break
                     raise
         except Exception as e:
             last_error = e
@@ -2556,9 +2666,14 @@ def run_yt_dlp(url, mode, quality="1080"):
                     "Add 2-3 fresh Instagram cookie profiles in Railway Variables, then redeploy.",
                     429,
                 ) from e
+            if youtube_url:
+                last_error = e if isinstance(e, ApiError) else ApiError(str(e), 400)
+                break
             raise
     
     if not info or not ydl:
+        if youtube_url and mode != "audio":
+            return download_youtube_via_resolver(url, quality)
         raise last_error or ApiError("Could not download this media.", 400)
 
     if mode != "audio" and not fallback_note:

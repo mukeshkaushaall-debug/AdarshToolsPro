@@ -531,6 +531,19 @@ function buildFastPreviewFromUrl(url) {
   try {
     const parsed = new URL(url);
     const host = parsed.hostname.replace("www.", "");
+    const youtubeId = getYouTubeVideoId(url);
+    if (youtubeId) {
+      const isShort = parsed.pathname.includes("/shorts/");
+      return {
+        success: true,
+        title: "YouTube video",
+        uploader: "youtube.com",
+        aspect_ratio: isShort ? 9 / 16 : 16 / 9,
+        thumbnail: `https://i.ytimg.com/vi/${youtubeId}/hqdefault.jpg`,
+        webpage_url: url,
+        preview_note: "Loading playable preview with audio…",
+      };
+    }
     const instagram = buildSocialPreviewFromUrl(url);
     if (instagram) return instagram;
     if (host.includes("pinterest.")) {
@@ -549,7 +562,7 @@ function buildFastPreviewFromUrl(url) {
   return null;
 }
 
-function getYouTubeEmbedUrl(value) {
+function getYouTubeVideoId(value) {
   if (!value) return "";
   try {
     const parsed = new URL(value);
@@ -557,10 +570,15 @@ function getYouTubeEmbedUrl(value) {
     let id = parsed.searchParams.get("v");
     if (!id && host === "youtu.be") id = parsed.pathname.slice(1).split("/")[0];
     if (!id && parsed.pathname.includes("/shorts/")) id = parsed.pathname.split("/shorts/")[1].split(/[/?#]/)[0];
-    return id ? `https://www.youtube.com/embed/${id}` : "";
+    return id || "";
   } catch {
     return "";
   }
+}
+
+function getYouTubeEmbedUrl(value) {
+  const id = getYouTubeVideoId(value);
+  return id ? `https://www.youtube.com/embed/${id}` : "";
 }
 
 function buildSocialPreviewFromUrl(url) {

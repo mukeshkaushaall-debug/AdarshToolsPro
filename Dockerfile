@@ -12,8 +12,14 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 WORKDIR /app
 
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends ffmpeg curl ca-certificates \
+    && apt-get install -y --no-install-recommends ffmpeg curl ca-certificates git nodejs npm \
     && rm -rf /var/lib/apt/lists/*
+
+# PO token provider for cookieless YouTube (runs in start.sh)
+RUN git clone --depth 1 --branch 1.3.1 https://github.com/Brainicism/bgutil-ytdlp-pot-provider.git /app/bgutil-pot \
+    && cd /app/bgutil-pot/server \
+    && npm ci \
+    && npx tsc
 
 COPY backend/requirements.txt /app/backend/requirements.txt
 RUN pip install --upgrade pip \
@@ -30,4 +36,9 @@ WORKDIR /app/backend
 
 EXPOSE 5000
 
-CMD gunicorn app:app --bind 0.0.0.0:${PORT} --workers 1 --threads 4 --timeout 300
+ENV BGUTIL_POT_BASE_URL=http://127.0.0.1:4416 \
+    YOUTUBE_USE_COOKIES=0
+
+RUN chmod +x /app/start.sh
+
+CMD ["/app/start.sh"]
