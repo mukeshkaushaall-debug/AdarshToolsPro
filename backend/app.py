@@ -1350,6 +1350,60 @@ def require_ffmpeg():
     return ffmpeg
 
 
+def ffprobe_path():
+    found = shutil.which("ffprobe")
+    if found:
+        return found
+    ffmpeg = shutil.which("ffmpeg")
+    if not ffmpeg:
+        return None
+    sibling = Path(ffmpeg).with_name("ffprobe.exe" if os.name == "nt" else "ffprobe")
+    return str(sibling) if sibling.exists() else None
+
+
+def file_has_audio_stream(path):
+    """Return True when the media file contains at least one audio stream."""
+    probe = ffprobe_path()
+    if not probe:
+        return True
+    cmd = [
+        probe,
+        "-v",
+        "error",
+        "-select_streams",
+        "a",
+        "-show_entries",
+        "stream=index",
+        "-of",
+        "csv=p=0",
+        str(path),
+    ]
+    try:
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
+    except subprocess.TimeoutExpired:
+        return True
+    if result.returncode != 0:
+        return True
+    return bool((result.stdout or "").strip())
+
+
+def merge_format_tail(has_ffmpeg):
+    """yt-dlp fallback chain tail that keeps audio instead of video-only streams."""
+    return "bv*+ba/b" if has_ffmpeg else "b"
+
+
+def is_direct_http_format(item):
+    media_url = item.get("url") or ""
+    if not media_url.startswith("http"):
+        return False
+    protocol = (item.get("protocol") or "https").lower()
+    if "m3u8" in protocol or "m3u8" in media_url.lower():
+        return False
+    if "dash" in protocol and media_url.endswith(".mpd"):
+        return False
+    return True
+
+
 def clamp_int(value, default, minimum, maximum):
     try:
         number = int(float(value))
@@ -1904,6 +1958,15 @@ def choose_available_video_format(info, quality, has_ffmpeg):
         limited_videos = videos
         limited_progressive = progressive
 
+    tail = merge_format_tail(has_ffmpeg)
+    progressive_selected = max(limited_progressive or progressive, key=video_format_score, default=None)
+    if progressive_selected:
+        progressive_height = int(format_number(progressive_selected.get("height")))
+        note = ""
+        if requested_height and progressive_height and progressive_height != requested_height:
+            note = f"Downloaded {progressive_height}p because {requested_height}p was not available."
+        return f"{progressive_selected['format_id']}/{tail}", note, progressive_height
+
     selected = max(limited_videos or videos, key=video_format_score, default=None)
     if not selected:
         return ytdlp_video_format(quality, has_ffmpeg)[0], "", None
@@ -1915,20 +1978,61 @@ def choose_available_video_format(info, quality, has_ffmpeg):
 
     selected_id = selected["format_id"]
     if has_ffmpeg:
-        if selected.get("acodec") and selected.get("acodec") != "none":
-            return f"{selected_id}/b", note, selected_height
+        if format_has_audio(selected):
+            return f"{selected_id}/{tail}", note, selected_height
         audio = max(audios, key=audio_format_score, default=None)
         if audio:
-            return f"{selected_id}+{audio['format_id']}/{selected_id}/b", note, selected_height
-        return f"{selected_id}/b", note, selected_height
+            return f"{selected_id}+{audio['format_id']}/{tail}", note, selected_height
+        return ytdlp_video_format(quality, has_ffmpeg)[0], note, selected_height
 
-    progressive_selected = max(limited_progressive or progressive, key=video_format_score, default=None)
+    return "b[acodec!=none]/b", "Downloaded best available single-file quality because FFmpeg merge is not available.", None
+
+
+def instagram_ytdlp_format(quality, has_ffmpeg):
+    """Instagram-safe yt-dlp format string: always merge video+audio, never fall back to silent video."""
+    if not has_ffmpeg:
+        return "best[acodec!=none][ext=mp4]/best[acodec!=none]/best", None
+    requested_height = requested_video_height(quality)
+    if requested_height:
+        height = str(requested_height)
+        return (
+            f"bv*[height<={height}]+ba/"
+            f"b[height<={height}][acodec!=none]/"
+            f"bv*+ba/b[height<={height}]/"
+            "bv*+ba/b"
+        ), requested_height
+    return "bv*+ba/b", None
+
+
+def choose_instagram_video_format(info, quality, has_ffmpeg):
+    """Prefer muxed Instagram streams when present, otherwise force bv*+ba merge."""
+    requested_height = requested_video_height(quality)
+    videos, audios, progressive = instagram_format_lists(info)
+    tail = merge_format_tail(has_ffmpeg)
+
+    if requested_height:
+        progressive_pool = [
+            item for item in progressive
+            if format_number(item.get("height")) <= requested_height
+        ]
+    else:
+        progressive_pool = progressive
+
+    progressive_selected = max(progressive_pool or progressive, key=video_format_score, default=None)
+    if progressive_selected and not audios:
+        height = int(format_number(progressive_selected.get("height")))
+        note = ""
+        if requested_height and height and height != requested_height:
+            note = f"Downloaded {height}p because {requested_height}p was not available."
+        return f"{progressive_selected['format_id']}/{tail}", note, height
+
+    if has_ffmpeg:
+        return instagram_ytdlp_format(quality, True)
+
     if progressive_selected:
-        progressive_height = int(format_number(progressive_selected.get("height")))
-        if requested_height and progressive_height and progressive_height != requested_height:
-            note = f"Downloaded {progressive_height}p because {requested_height}p was not available without FFmpeg merge."
-        return f"{progressive_selected['format_id']}/b", note, progressive_height
-    return "b", "Downloaded best available single-file quality because FFmpeg merge is not available.", None
+        height = int(format_number(progressive_selected.get("height")))
+        return f"{progressive_selected['format_id']}/b", "", height
+    return instagram_ytdlp_format(quality, False)
 
 
 def ytdlp_video_format(quality, has_ffmpeg):
@@ -1946,6 +2050,20 @@ def format_has_audio(item):
     return bool(item and item.get("acodec") and item.get("acodec") != "none")
 
 
+def is_instagram_audio_format(item):
+    if not item.get("url"):
+        return False
+    acodec = item.get("acodec")
+    if not acodec or acodec == "none":
+        return False
+    vcodec = item.get("vcodec")
+    if not vcodec or vcodec == "none":
+        return True
+    height = format_number(item.get("height"))
+    width = format_number(item.get("width"))
+    return height <= 0 and width <= 0
+
+
 def instagram_format_lists(info):
     formats = info.get("formats") or []
     videos = [
@@ -1955,13 +2073,7 @@ def instagram_format_lists(info):
         and item.get("vcodec") != "none"
         and format_number(item.get("height")) > 0
     ]
-    audios = [
-        item for item in formats
-        if item.get("url")
-        and item.get("acodec")
-        and item.get("acodec") != "none"
-        and (not item.get("vcodec") or item.get("vcodec") == "none")
-    ]
+    audios = [item for item in formats if is_instagram_audio_format(item)]
     progressive = [item for item in videos if format_has_audio(item)]
     return videos, audios, progressive
 
@@ -1982,21 +2094,27 @@ def pick_instagram_direct_formats(info, quality, has_ffmpeg):
         return None, None
 
     requested_height = requested_video_height(quality)
-    progressive_pool = limit_formats_by_height(progressive, requested_height)
+    direct_videos = [item for item in videos if is_direct_http_format(item)]
+    direct_audios = [item for item in audios if is_direct_http_format(item)]
+    direct_progressive = [item for item in progressive if is_direct_http_format(item)]
+
+    video_pool = limit_formats_by_height(direct_videos or videos, requested_height)
+    video_selected = max(video_pool, key=video_format_score, default=None)
+
+    if has_ffmpeg and direct_audios and video_selected and not format_has_audio(video_selected):
+        return video_selected, max(direct_audios, key=audio_format_score)
+
+    progressive_pool = limit_formats_by_height(direct_progressive, requested_height)
     if progressive_pool:
         return max(progressive_pool, key=video_format_score), None
 
-    video_pool = limit_formats_by_height(videos, requested_height)
-    video_selected = max(video_pool or videos, key=video_format_score, default=None)
-    if not video_selected:
-        return None, None
-    if format_has_audio(video_selected):
+    if video_selected and format_has_audio(video_selected) and is_direct_http_format(video_selected):
         return video_selected, None
-    if not audios:
+
+    if video_selected and not direct_audios:
         return video_selected, None
-    if not has_ffmpeg:
-        return None, None
-    return video_selected, max(audios, key=audio_format_score)
+
+    return None, None
 
 
 def download_media_stream(media_url, headers, path):
@@ -2024,28 +2142,65 @@ def ffmpeg_merge_video_audio(video_path, audio_path, output_path):
     ffmpeg = shutil.which("ffmpeg")
     if not ffmpeg:
         return False
-    cmd = [
-        ffmpeg,
-        "-y",
-        "-i",
-        str(video_path),
-        "-i",
-        str(audio_path),
-        "-c:v",
-        "copy",
-        "-c:a",
-        "aac",
-        "-b:a",
-        "128k",
-        "-movflags",
-        "+faststart",
-        str(output_path),
+    commands = [
+        [
+            ffmpeg,
+            "-y",
+            "-i",
+            str(video_path),
+            "-i",
+            str(audio_path),
+            "-map",
+            "0:v:0",
+            "-map",
+            "1:a:0",
+            "-c:v",
+            "copy",
+            "-c:a",
+            "aac",
+            "-b:a",
+            "128k",
+            "-shortest",
+            "-movflags",
+            "+faststart",
+            str(output_path),
+        ],
+        [
+            ffmpeg,
+            "-y",
+            "-i",
+            str(video_path),
+            "-i",
+            str(audio_path),
+            "-map",
+            "0:v:0",
+            "-map",
+            "1:a:0",
+            "-c:v",
+            "libx264",
+            "-preset",
+            "veryfast",
+            "-crf",
+            "20",
+            "-c:a",
+            "aac",
+            "-b:a",
+            "128k",
+            "-shortest",
+            "-movflags",
+            "+faststart",
+            str(output_path),
+        ],
     ]
-    try:
-        result = subprocess.run(cmd, capture_output=True, text=True, timeout=180)
-    except subprocess.TimeoutExpired:
-        return False
-    return result.returncode == 0 and output_path.exists() and output_path.stat().st_size >= 1024
+    for cmd in commands:
+        try:
+            result = subprocess.run(cmd, capture_output=True, text=True, timeout=180)
+        except subprocess.TimeoutExpired:
+            continue
+        if result.returncode == 0 and output_path.exists() and output_path.stat().st_size >= 1024:
+            return True
+        delete_quietly(output_path)
+    return False
 
 
 def media_download_headers(info, url, selected_format):
@@ -2102,6 +2257,10 @@ def direct_instagram_download_from_cache(url, quality):
             delete_quietly(temp_path)
 
     if not path.exists() or path.stat().st_size < 1024:
+        delete_quietly(path)
+        return None
+
+    if not file_has_audio_stream(path):
         delete_quietly(path)
         return None
 
@@ -2192,13 +2351,19 @@ def run_yt_dlp(url, mode, quality="1080"):
                     cookie_source=cookie_source,
                     extra_opts={"skip_download": True},
                 )
-                format_selector, quality_note, _height = choose_available_video_format(probe_info, quality, has_ffmpeg)
+                if instagram_url:
+                    format_selector, quality_note, _height = choose_instagram_video_format(probe_info, quality, has_ffmpeg)
+                else:
+                    format_selector, quality_note, _height = choose_available_video_format(probe_info, quality, has_ffmpeg)
                 ydl_opts = {
                     **common_opts,
                     "format": format_selector,
                 }
                 if has_ffmpeg:
                     ydl_opts["merge_output_format"] = "mp4"
+                    ydl_opts["prefer_ffmpeg"] = True
+                if instagram_url and is_instagram_url(url):
+                    cache_media_info(url, probe_info)
 
             try:
                 info, ydl = extract_info_safe(
@@ -2306,6 +2471,30 @@ def run_yt_dlp(url, mode, quality="1080"):
     if not after:
         raise ApiError("Download finished but the output file was not found.", 500)
     file_path = max(after, key=lambda p: p.stat().st_mtime)
+    if mode != "audio" and instagram_url and not file_has_audio_stream(file_path):
+        delete_quietly(file_path)
+        has_ffmpeg = shutil.which("ffmpeg") is not None
+        if not has_ffmpeg:
+            raise ApiError("FFmpeg is required to merge Instagram video and audio. Install FFmpeg on the server.", 500)
+        retry_opts = {
+            **ytdlp_base_opts(client="web", cookie_source=cookie_sources[0] if cookie_sources else None),
+            "outtmpl": output_template,
+            "restrictfilenames": True,
+            "windowsfilenames": True,
+            "format": instagram_ytdlp_format(quality, True)[0],
+            "merge_output_format": "mp4",
+            "prefer_ffmpeg": True,
+        }
+        info, ydl = extract_info_safe(url, download=True, extra_opts=retry_opts)
+        after = [p for p in DOWNLOAD_DIR.glob(f"{output_prefix}_*") if p.is_file()]
+        if not after:
+            raise ApiError("Download finished but the output file had no audio track.", 500)
+        file_path = max(after, key=lambda p: p.stat().st_mtime)
+        if not file_has_audio_stream(file_path):
+            delete_quietly(file_path)
+            raise ApiError("Instagram video downloaded without audio. Refresh cookies and try again.", 500)
+        fallback_note = "Retried download with forced audio merge."
+
     details = downloaded_video_details(info) if mode != "audio" else {}
     return {
         "success": True,
