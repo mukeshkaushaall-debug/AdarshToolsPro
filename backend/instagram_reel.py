@@ -54,12 +54,28 @@ def is_video_url(media_url):
     if not media_url or not media_url.startswith("http"):
         return False
     lowered = media_url.lower()
-    if any(x in lowered for x in (".jpg", ".jpeg", ".png", ".webp", ".gif")):
-        return False
-    return any(
-        token in lowered
-        for token in ("cdninstagram", "fbcdn", ".mp4", "/o1/v/t16/", "/v/t", "video")
+    blocked = (
+        "rsrc.php",
+        "static.cdninstagram",
+        ".ico",
+        ".woff",
+        ".js",
+        ".css",
+        ".html",
+        ".json",
+        ".jpg",
+        ".jpeg",
+        ".png",
+        ".webp",
+        ".gif",
+        ".svg",
+        ".heic",
     )
+    if any(token in lowered for token in blocked):
+        return False
+    if "fbcdn.net" in lowered:
+        return any(token in lowered for token in ("/o1/v/", "/v/t16/", "/v/t2/", "/m366/", ".mp4"))
+    return ".mp4" in lowered
 
 
 def _session():
@@ -397,7 +413,7 @@ def fetch_via_cobalt(url, api_base=None):
 
 def resolve_instagram_media(url):
     errors = []
-    for resolver in (scrape_instagram_candidates, resolve_via_ytdlp):
+    for resolver in (resolve_via_ytdlp, scrape_instagram_candidates):
         try:
             return resolver(url)
         except Exception as error:

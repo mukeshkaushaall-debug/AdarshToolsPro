@@ -881,18 +881,25 @@ def instagram_media_info(url):
         return social_preview_fallback(url, "")
 
 
+def clean_instagram_url(url):
+    from instagram_reel import normalize_url
+
+    return normalize_url(url) or re.sub(r"\?.*$", "", url.strip())
+
+
 def download_instagram_reel_ytdlp(url, quality):
     has_ffmpeg = shutil.which("ffmpeg") is not None
     output_prefix = make_id()
     output_template = str(DOWNLOAD_DIR / f"{output_prefix}_%(title).80s.%(ext)s")
+    url = clean_instagram_url(url)
     code_match = re.search(r"instagram\.com/(?:p|reel|tv)/([^/?#]+)", url, re.I)
     try_urls = [url]
     if code_match:
         code = code_match.group(1)
         try_urls.extend(
             [
+                f"https://www.instagram.com/reel/{code}/",
                 f"https://www.instagram.com/reel/{code}/embed/captioned/",
-                f"https://www.instagram.com/p/{code}/embed/captioned/",
             ]
         )
     format_selector = instagram_ytdlp_format(quality, has_ffmpeg)[0]
@@ -913,7 +920,7 @@ def download_instagram_reel_ytdlp(url, quality):
             if not after:
                 continue
             file_path = max(after, key=lambda p: p.stat().st_mtime)
-            if file_has_audio_stream(file_path):
+            if is_valid_video_file(file_path) and file_has_audio_stream(file_path):
                 return {
                     "success": True,
                     "title": info.get("title") or "Instagram reel",
@@ -932,12 +939,21 @@ def download_instagram_reel_ytdlp(url, quality):
 
 def download_instagram_reel(url, quality):
     errors = []
+    url = clean_instagram_url(url)
+
+    try:
+        return download_instagram_reel_ytdlp(url, quality)
+    except ApiError as error:
+        errors.append(error.message)
+    except Exception as error:
+        errors.append(str(error))
+
     try:
         resolved = resolve_instagram_media(url)
         candidates = filter_by_quality(resolved["candidates"], quality)
         title = secure_filename(resolved["title"][:80]) or "instagram_reel"
         referer = resolved["webpage_url"]
-        note = "Downloaded from public Instagram media."
+        note = "Downloaded from Instagram CDN."
 
         for pick in candidates[:10]:
             media_url = pick.get("url")
@@ -951,7 +967,7 @@ def download_instagram_reel(url, quality):
             }
             if not download_media_stream(media_url, headers, path):
                 continue
-            if not file_has_audio_stream(path):
+            if not is_valid_video_file(path) or not file_has_audio_stream(path):
                 delete_quietly(path)
                 continue
 
@@ -970,14 +986,7 @@ def download_instagram_reel(url, quality):
                 "note": note,
                 "video_height": picked_height or None,
             }
-        errors.append("Direct download links did not include audio.")
-    except Exception as error:
-        errors.append(str(error))
-
-    try:
-        return download_instagram_reel_ytdlp(url, quality)
-    except ApiError as error:
-        errors.append(error.message)
+        errors.append("CDN links were invalid or too small.")
     except Exception as error:
         errors.append(str(error))
 
@@ -1485,11 +1494,30 @@ def ffprobe_path():
     return str(sibling) if sibling.exists() else None
 
 
+MIN_INSTAGRAM_VIDEO_BYTES = 200 * 1024
+
+
+def is_valid_video_file(path, min_bytes=MIN_INSTAGRAM_VIDEO_BYTES):
+    if not path.exists():
+        return False
+    if path.stat().st_size < min_bytes:
+        return False
+    try:
+        head = path.open("rb").read(12)
+    except OSError:
+        return False
+    if len(head) < 8:
+        return False
+    return head[4:8] == b"ftyp" or head[:3] == b"ID3"
+
+
 def file_has_audio_stream(path):
     """Return True when the media file contains at least one audio stream."""
+    if not is_valid_video_file(path, min_bytes=50 * 1024):
+        return False
     probe = ffprobe_path()
     if not probe:
-        return True
+        return is_valid_video_file(path)
     cmd = [
         probe,
         "-v",
@@ -1505,9 +1533,9 @@ def file_has_audio_stream(path):
     try:
         result = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
     except subprocess.TimeoutExpired:
-        return True
+        return False
     if result.returncode != 0:
-        return True
+        return False
     return bool((result.stdout or "").strip())
 
 
