@@ -1,4 +1,4 @@
-const API_BASE = window.location.protocol === "file:" ? "http://127.0.0.1:5000" : "";
+﻿const API_BASE = window.location.protocol === "file:" ? "http://127.0.0.1:5000" : "";
 
 const tools = [
   ["youtube", "YouTube Video Downloader", "Download HD videos up to 4K when available.", "youtube", "linear-gradient(135deg,#ff0033,#ff7a59)", "/youtube-video-downloader"],
@@ -480,91 +480,142 @@ function youtubePreviewAspectRatio(url, data = {}) {
   return 16 / 9;
 }
 
-function resolvePreviewAspectRatio(data) {
-  const pageUrl = data.webpage_url || "";
+function isInstagramUrl(url) {
+  if (!url) return false;
+  try {
+    return new URL(url).hostname.replace("www.", "").includes("instagram.com");
+  } catch {
+    return false;
+  }
+}
+
+function instagramPreviewAspectRatio(url) {
+  try {
+    const path = new URL(url).pathname.toLowerCase();
+    if (path.includes("/reel/") || path.includes("/tv/")) return 9 / 16;
+    if (path.includes("/p/")) return 1;
+  } catch {
+    /* ignore */
+  }
+  return 9 / 16;
+}
+
+function resolvePreviewAspectRatio(data, url = "") {
+  const pageUrl = url || data.webpage_url || "";
   if (isYouTubePreviewUrl(pageUrl)) return youtubePreviewAspectRatio(pageUrl, data);
+  if (isInstagramUrl(pageUrl) || isInstagramPreview(data)) return instagramPreviewAspectRatio(pageUrl);
   return Number(data.aspect_ratio) || 16 / 9;
 }
 
-function showPreviewLoading(host, ratio = 16 / 9, pageUrl = "") {
+function lockPreviewLayout(host, url, data = {}) {
+  const ratio = resolvePreviewAspectRatio(data, url);
+  const portrait = ratio < 1;
+  const slotWidth = portrait ? 220 : 300;
+  const slotHeight = Math.round(slotWidth / ratio);
+  host.dataset.previewUrl = url || data.webpage_url || "";
   host.style.setProperty("--preview-ratio", ratio);
-  host.classList.add("show");
-  host.classList.remove("embed-preview", "instagram-preview");
-  host.classList.toggle("is-portrait", ratio < 1);
-  host.classList.toggle("youtube-shorts-preview", ratio < 1 && isYouTubePreviewUrl(pageUrl));
-  host.classList.toggle("youtube-video-preview", ratio >= 1 && isYouTubePreviewUrl(pageUrl));
+  host.style.setProperty("--preview-width", `${slotWidth}px`);
+  host.style.setProperty("--preview-height", `${slotHeight}px`);
+  host.classList.add("preview-layout-locked", "show");
+  host.classList.toggle("is-portrait", portrait);
+  host.classList.toggle("youtube-shorts-preview", portrait && isYouTubePreviewUrl(url));
+  host.classList.toggle("youtube-video-preview", !portrait && isYouTubePreviewUrl(url));
+  host.classList.toggle("instagram-reel-preview", portrait && isInstagramUrl(url));
+}
+
+function ensurePreviewShell(host) {
+  if (host.querySelector(".preview-media") && host.querySelector(".preview-meta")) return;
   host.innerHTML = `
-    <div class="preview-media preview-skeleton" aria-hidden="true"></div>
+    <div class="preview-media"></div>
     <div class="preview-meta">
-      <strong>Loading preview</strong>
-      <p>Fetching video with audio…</p>
+      <strong></strong>
+      <p></p>
     </div>`;
 }
 
+function setPreviewMeta(host, data, loading = false) {
+  ensurePreviewShell(host);
+  const meta = host.querySelector(".preview-meta");
+  if (!meta) return;
+  meta.querySelector("strong").textContent = loading ? "Loading preview" : (data.title || "Media preview");
+  const parts = [];
+  if (loading) parts.push("Fetching video with audioâ€¦");
+  else {
+    if (data.uploader) parts.push(data.uploader);
+    if (data.duration_text) parts.push(data.duration_text);
+  }
+  meta.querySelector("p").textContent = parts.join(" | ");
+  meta.querySelectorAll(".preview-note").forEach((node) => node.remove());
+  if (!loading && data.preview_note) {
+    const note = document.createElement("p");
+    note.className = "preview-note";
+    note.textContent = data.preview_note;
+    meta.appendChild(note);
+  }
+}
+
+function setPreviewMediaHtml(host, html, extraClass = "") {
+  ensurePreviewShell(host);
+  const media = host.querySelector(".preview-media");
+  if (!media) return;
+  media.className = extraClass ? `preview-media ${extraClass}` : "preview-media";
+  media.innerHTML = html;
+}
+
+function showPreviewLoading(host, url, data = {}) {
+  lockPreviewLayout(host, url, data);
+  host.classList.remove("embed-preview", "instagram-preview");
+  setPreviewMediaHtml(host, `<div class="preview-skeleton" aria-hidden="true"></div>`, "preview-skeleton");
+  setPreviewMeta(host, data, true);
+}
+
 function renderPreview(host, data) {
-  const ratio = resolvePreviewAspectRatio(data);
-  host.style.setProperty("--preview-ratio", ratio);
-  host.classList.add("show");
-  host.classList.toggle("is-portrait", ratio < 1);
-  host.classList.toggle("youtube-shorts-preview", ratio < 1 && isYouTubePreviewUrl(data.webpage_url));
-  host.classList.toggle("youtube-video-preview", ratio >= 1 && isYouTubePreviewUrl(data.webpage_url));
+  const url = data.webpage_url || host.dataset.previewUrl || "";
+  lockPreviewLayout(host, url, data);
   const embedUrl = data.embed_url || getYouTubeEmbedUrl(data.webpage_url);
   if (data.preview_video_url) {
-    const videoSrc = previewVideoSrc(data.preview_video_url);
     host.classList.remove("embed-preview", "instagram-preview");
-    host.innerHTML = `
-      <div class="preview-media">
-        <video src="${videoSrc}" ${data.thumbnail ? `poster="${data.thumbnail}"` : ""} controls playsinline preload="metadata"></video>
-      </div>
-      <div class="preview-meta">
-        <strong>${data.title || "Media preview"}</strong>
-        <p>${data.uploader || "Public source"}${data.duration_text ? ` | ${data.duration_text}` : ""}</p>
-        ${data.preview_note ? `<p>${data.preview_note}</p>` : ""}
-      </div>`;
+    const videoSrc = previewVideoSrc(data.preview_video_url);
+    setPreviewMediaHtml(
+      host,
+      `<video src="${videoSrc}" ${data.thumbnail ? `poster="${data.thumbnail}"` : ""} controls playsinline preload="metadata"></video>`,
+    );
+    setPreviewMeta(host, data);
     return;
   }
   if (isInstagramPreview(data)) {
     const permalink = instagramPermalink(data);
     host.classList.add("embed-preview", "instagram-preview");
-    host.innerHTML = `
-      <div class="preview-media">
-        <blockquote class="instagram-media" data-instgrm-permalink="${permalink}" data-instgrm-version="14">
-          <a href="${permalink}" target="_blank" rel="noreferrer">Open Instagram preview</a>
-        </blockquote>
-      </div>
-      <div class="preview-meta">
-        <strong>${data.title || "Instagram preview"}</strong>
-        <p>${data.uploader || "instagram.com"}</p>
-        ${data.preview_note ? `<p>${data.preview_note}</p>` : ""}
-      </div>`;
+    setPreviewMediaHtml(
+      host,
+      `<blockquote class="instagram-media" data-instgrm-permalink="${permalink}" data-instgrm-version="14">
+        <a href="${permalink}" target="_blank" rel="noreferrer">Open Instagram preview</a>
+      </blockquote>`,
+    );
+    setPreviewMeta(host, data);
     processInstagramEmbeds();
     return;
   }
   if (embedUrl) {
     host.classList.add("embed-preview");
     host.classList.remove("instagram-preview");
-    host.innerHTML = `
-      <div class="preview-media">
-        <iframe src="${appendAutoplayParams(embedUrl)}" title="Video preview" loading="lazy" allow="autoplay; encrypted-media; picture-in-picture" allowfullscreen referrerpolicy="no-referrer-when-downgrade"></iframe>
-      </div>
-      <div class="preview-meta">
-        <strong>${data.title || "Video preview"}</strong>
-        <p>${data.uploader || "Public source"}</p>
-        ${data.preview_note ? `<p>${data.preview_note}</p>` : ""}
-      </div>`;
+    setPreviewMediaHtml(
+      host,
+      `<iframe src="${appendAutoplayParams(embedUrl)}" title="Video preview" loading="lazy" allow="autoplay; encrypted-media; picture-in-picture" allowfullscreen referrerpolicy="no-referrer-when-downgrade"></iframe>`,
+    );
+    setPreviewMeta(host, data);
     return;
   }
   host.classList.remove("embed-preview", "instagram-preview");
-  host.innerHTML = `
-    <div class="preview-media">
-      ${data.thumbnail ? `<img src="${data.thumbnail}" alt="Video preview" loading="lazy" decoding="async">` : `<div class="preview-fallback">Preview</div>`}
-    </div>
-    <div class="preview-meta">
-      <strong>${data.title || "Media preview"}</strong>
-      <p>${data.uploader || "Public source"}${data.duration_text ? ` | ${data.duration_text}` : ""}</p>
-      ${data.preview_note ? `<p>${data.preview_note}</p>` : ""}
-    </div>`;
+  setPreviewMediaHtml(
+    host,
+    data.thumbnail
+      ? `<img src="${data.thumbnail}" alt="Video preview" loading="lazy" decoding="async">`
+      : `<div class="preview-fallback">Preview</div>`,
+  );
+  setPreviewMeta(host, data);
 }
+
 
 function buildFastPreviewFromUrl(url) {
   try {
@@ -580,7 +631,7 @@ function buildFastPreviewFromUrl(url) {
         aspect_ratio: isShort ? 9 / 16 : 16 / 9,
         thumbnail: `https://i.ytimg.com/vi/${youtubeId}/hqdefault.jpg`,
         webpage_url: url,
-        preview_note: "Loading playable preview with audio…",
+        preview_note: "Loading playable preview with audioâ€¦",
       };
     }
     const instagram = buildSocialPreviewFromUrl(url);
@@ -627,11 +678,13 @@ function buildSocialPreviewFromUrl(url) {
     const instagramMatch = parsed.pathname.match(/\/(reel|p|tv)\/([^/?#]+)/);
     if (host.includes("instagram.com") && instagramMatch) {
       const type = instagramMatch[1] === "reel" ? "reel" : "p";
+      const isReel = instagramMatch[1] === "reel" || instagramMatch[1] === "tv";
       return {
         success: true,
         title: "Instagram preview",
         uploader: "instagram.com",
-        aspect_ratio: 1,
+        aspect_ratio: isReel ? 9 / 16 : 1,
+        webpage_url: url,
         embed_type: "instagram",
         embed_url: `https://www.instagram.com/${type}/${instagramMatch[2]}/embed`,
         permalink: `https://www.instagram.com/${type}/${instagramMatch[2]}/`,
@@ -658,16 +711,14 @@ function initLinkPreview(form) {
     if (!isValidHttpUrl(url) || url === lastValue) return;
     lastValue = url;
     const fastPreview = buildFastPreviewFromUrl(url);
-    showPreviewLoading(
-      host,
-      fastPreview?.aspect_ratio || youtubePreviewAspectRatio(url, fastPreview || {}),
-      url,
-    );
+    showPreviewLoading(host, url, fastPreview || {});
     try {
       const data = await postJSON("/api/media/info", { url }, 180000);
+      data.webpage_url = data.webpage_url || url;
       if (isYouTubePreviewUrl(url)) {
         data.aspect_ratio = youtubePreviewAspectRatio(url, data);
-        data.webpage_url = data.webpage_url || url;
+      } else if (isInstagramUrl(url)) {
+        data.aspect_ratio = instagramPreviewAspectRatio(url);
       }
       renderPreview(host, data);
     } catch {

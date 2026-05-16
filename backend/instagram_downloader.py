@@ -359,8 +359,8 @@ def format_chain(quality):
         if height and q != "best":
             h = str(max(144, min(4320, int(height))))
             return [
-                f"bv*[height<={h}]+ba/b[height<={h}][acodec!=none]/b[height<={h}]",
-                f"best[height<={h}][ext=mp4]/best[height<={h}][acodec!=none]",
+                f"bv*[height={h}]+ba/bv*[height<={h}]+ba/b[height={h}][acodec!=none]/b[height<={h}][acodec!=none]",
+                f"best[height={h}][ext=mp4]/best[height<={h}][ext=mp4]/best[height<={h}][acodec!=none]",
             ]
         return ["bv*+ba/b[ext=mp4]/best[ext=mp4]/best", "best"]
     if height and q != "best":
