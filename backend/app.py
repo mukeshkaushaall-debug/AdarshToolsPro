@@ -29,7 +29,7 @@ from yt_dlp import YoutubeDL
 from yt_dlp.version import __version__ as YTDLP_VERSION
 from yt_dlp.utils import DownloadError
 
-from instagram_reel import filter_by_quality, resolve_instagram_media
+from instagram_downloader import download_instagram, probe_instagram
 
 BASE_DIR = Path(__file__).resolve().parent
 PROJECT_DIR = BASE_DIR.parent
@@ -436,6 +436,8 @@ def simplify_download_error(message):
         return "This media is unavailable from the source site."
     if "requested format is not available" in lowered:
         return "YouTube did not expose downloadable formats to this server. Try Best available, or add YOUTUBE_COOKIES_TEXT in Railway Variables."
+    if "no downloadable video" in lowered or "instagram" in lowered and "empty media" in lowered:
+        return "Instagram blocked this server. Try again in a minute or use Best quality. Public reels only."
     return msg.replace("ERROR:", "").strip()[:220] or "Could not download this media. Try another public link."
 
 
@@ -861,139 +863,41 @@ def safe_download_path(filename):
 
 def instagram_media_info(url):
     try:
-        resolved = resolve_instagram_media(url)
-        best = resolved["candidates"][0]
-        height = int(best.get("height") or 720)
+        data = probe_instagram(url, instagram_cookie_sources())
         return {
             "success": True,
-            "title": resolved["title"],
+            "title": data["title"],
             "uploader": "instagram.com",
             "duration": None,
             "duration_text": "",
             "thumbnail": "",
-            "preview_video_url": best["url"],
+            "preview_video_url": data["preview_video_url"],
             "width": None,
-            "height": height,
+            "height": data["height"],
             "aspect_ratio": 9 / 16,
-            "webpage_url": resolved["webpage_url"],
+            "webpage_url": data["webpage_url"],
         }
     except Exception:
         return social_preview_fallback(url, "")
 
 
-def clean_instagram_url(url):
-    from instagram_reel import normalize_url
-
-    return normalize_url(url) or re.sub(r"\?.*$", "", url.strip())
-
-
-def download_instagram_reel_ytdlp(url, quality):
-    has_ffmpeg = shutil.which("ffmpeg") is not None
-    output_prefix = make_id()
-    output_template = str(DOWNLOAD_DIR / f"{output_prefix}_%(title).80s.%(ext)s")
-    url = clean_instagram_url(url)
-    code_match = re.search(r"instagram\.com/(?:p|reel|tv)/([^/?#]+)", url, re.I)
-    try_urls = [url]
-    if code_match:
-        code = code_match.group(1)
-        try_urls.extend(
-            [
-                f"https://www.instagram.com/reel/{code}/",
-                f"https://www.instagram.com/reel/{code}/embed/captioned/",
-            ]
-        )
-    format_selector = instagram_ytdlp_format(quality, has_ffmpeg)[0]
-    last_error = None
-    for try_url in try_urls:
-        opts = {
-            **ytdlp_base_opts(client="web", cookie_source={"label": "NO_COOKIES", "file": ""}),
-            "outtmpl": output_template,
-            "restrictfilenames": True,
-            "format": format_selector,
-        }
-        if has_ffmpeg:
-            opts["merge_output_format"] = "mp4"
-            opts["prefer_ffmpeg"] = True
-        try:
-            info, _ = extract_info_safe(try_url, download=True, extra_opts=opts)
-            after = [p for p in DOWNLOAD_DIR.glob(f"{output_prefix}_*") if p.is_file()]
-            if not after:
-                continue
-            file_path = max(after, key=lambda p: p.stat().st_mtime)
-            if is_valid_video_file(file_path) and file_has_audio_stream(file_path):
-                return {
-                    "success": True,
-                    "title": info.get("title") or "Instagram reel",
-                    "filename": file_path.name,
-                    "file_size": file_path.stat().st_size,
-                    "download_url": public_download_url(file_path.name),
-                    "download_label": "Download video",
-                    "note": "Downloaded with built-in media extractor (audio merged).",
-                    "video_height": info.get("height"),
-                }
-            delete_quietly(file_path)
-        except ApiError as error:
-            last_error = error
-    raise last_error or ApiError("Could not download Instagram reel with audio.", 400)
-
-
 def download_instagram_reel(url, quality):
-    errors = []
-    url = clean_instagram_url(url)
-
     try:
-        return download_instagram_reel_ytdlp(url, quality)
-    except ApiError as error:
-        errors.append(error.message)
+        return download_instagram(
+            url,
+            quality,
+            DOWNLOAD_DIR,
+            make_id,
+            secure_filename,
+            public_download_url,
+            instagram_cookie_sources(),
+        )
+    except ValueError as error:
+        raise ApiError(str(error), 400) from error
+    except ApiError:
+        raise
     except Exception as error:
-        errors.append(str(error))
-
-    try:
-        resolved = resolve_instagram_media(url)
-        candidates = filter_by_quality(resolved["candidates"], quality)
-        title = secure_filename(resolved["title"][:80]) or "instagram_reel"
-        referer = resolved["webpage_url"]
-        note = "Downloaded from Instagram CDN."
-
-        for pick in candidates[:10]:
-            media_url = pick.get("url")
-            if not media_url:
-                continue
-            path = DOWNLOAD_DIR / f"{make_id()}_{title}.mp4"
-            headers = {
-                "User-Agent": ytdlp_base_opts()["http_headers"]["User-Agent"],
-                "Referer": referer,
-                "Accept": "*/*",
-            }
-            if not download_media_stream(media_url, headers, path):
-                continue
-            if not is_valid_video_file(path) or not file_has_audio_stream(path):
-                delete_quietly(path)
-                continue
-
-            picked_height = int(pick.get("height") or 0)
-            requested = requested_video_height(quality)
-            if requested and picked_height and picked_height != requested:
-                note = f"Downloaded {picked_height}p because {requested}p was not available."
-
-            return {
-                "success": True,
-                "title": resolved["title"],
-                "filename": path.name,
-                "file_size": path.stat().st_size,
-                "download_url": public_download_url(path.name),
-                "download_label": "Download video",
-                "note": note,
-                "video_height": picked_height or None,
-            }
-        errors.append("CDN links were invalid or too small.")
-    except Exception as error:
-        errors.append(str(error))
-
-    raise ApiError(
-        errors[-1] if errors else "Could not download this Instagram reel. Try a public link.",
-        400,
-    )
+        raise ApiError(simplify_download_error(str(error)), 400) from error
 
 
 def media_info(url):
@@ -2939,9 +2843,8 @@ def youtube_status():
 def instagram_status():
     return jsonify({
         "success": True,
-        "method": "public_scrape",
+        "method": "instagram_media_engine",
         "cookies_required": False,
-        "cobalt_fallback": bool(os.environ.get("COBALT_API_URL", "").strip()),
         "ffmpeg": bool(shutil.which("ffmpeg")),
         "ffprobe": bool(ffprobe_path()),
     })
