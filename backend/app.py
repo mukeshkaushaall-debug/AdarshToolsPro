@@ -436,8 +436,10 @@ def simplify_download_error(message):
         return "This media is unavailable from the source site."
     if "requested format is not available" in lowered:
         return "YouTube did not expose downloadable formats to this server. Try Best available, or add YOUTUBE_COOKIES_TEXT in Railway Variables."
-    if "no downloadable video" in lowered or "instagram" in lowered and "empty media" in lowered:
-        return "Instagram blocked this server. Try again in a minute or use Best quality. Public reels only."
+    if "rate-limit" in lowered or "login required" in lowered or "rate limit" in lowered:
+        return "Instagram is busy. Wait 1–2 minutes and try Best quality — download will retry automatically."
+    if "no downloadable video" in lowered or ("instagram" in lowered and "empty media" in lowered):
+        return "Could not fetch this reel right now. Try Best quality or wait a minute."
     return msg.replace("ERROR:", "").strip()[:220] or "Could not download this media. Try another public link."
 
 
