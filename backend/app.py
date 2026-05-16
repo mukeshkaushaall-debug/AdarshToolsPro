@@ -31,7 +31,7 @@ from yt_dlp.utils import DownloadError
 
 from instagram_downloader import download_instagram, probe_instagram
 from preview_utils import pick_preview_stream_pair, pick_preview_video_url
-from youtube_resolver import fetch_youtube_info
+from youtube_resolver import extract_video_id, fetch_youtube_info, minimal_youtube_info
 
 BASE_DIR = Path(__file__).resolve().parent
 PROJECT_DIR = BASE_DIR.parent
@@ -661,7 +661,11 @@ def ytdlp_base_opts(client="web", cookie_source=None):
         cookie_source = youtube_cookie_sources()[0]
     if cookie_source.get("file"):
         opts["cookiefile"] = cookie_source["file"]
-    
+
+    proxy = os.environ.get("YOUTUBE_PROXY", "").strip() or os.environ.get("HTTPS_PROXY", "").strip()
+    if proxy:
+        opts["proxy"] = proxy
+
     return opts
 
 
@@ -687,7 +691,9 @@ def youtube_cookie_status():
             os.environ.get("BGUTIL_POT_BASE_URL", "").strip()
             or os.environ.get("BGUTIL_BASE_URL", "http://127.0.0.1:4416").strip()
         )
-        status["resolver_fallbacks"] = ["invidious", "piped", "cobalt"]
+        status["resolver_fallbacks"] = ["yt-dlp+bgutil", "invidious-parallel", "piped-parallel", "cobalt", "oembed"]
+        status["invidious_instances"] = len(__import__("youtube_resolver").discover_invidious_instances())
+        status["piped_instances"] = len(__import__("youtube_resolver").discover_piped_instances())
         return status
     sources = [source for source in youtube_cookie_sources() if source["label"] != "NO_COOKIES"]
     return platform_cookie_status("YOUTUBE", sources)
@@ -949,7 +955,7 @@ def media_info(url):
     if is_instagram_url(url):
         return instagram_media_info(url)
     youtube_url = is_youtube_url(url)
-    clients = ["ios", "mweb", "tv", "web_creator", "web"] if youtube_url else ["web"]
+    clients = ["ios", "mweb", "tv", "web_creator", "web", "android"] if youtube_url else ["web"]
     if youtube_url:
         cookie_sources = youtube_cookie_sources()
     else:
@@ -977,12 +983,13 @@ def media_info(url):
             break
     if not info and youtube_url:
         try:
-            info = fetch_youtube_info(url)
-        except Exception as error:
-            raise last_error or ApiError(
-                f"Could not fetch YouTube preview. {error}",
-                400,
-            ) from error
+            info = fetch_youtube_info(url, require_formats=False)
+        except Exception:
+            video_id = extract_video_id(url)
+            if video_id:
+                info = minimal_youtube_info(url, video_id)
+            else:
+                raise last_error or ApiError("Could not fetch YouTube preview.", 400)
     if not info:
         raise last_error or ApiError("Could not fetch preview.", 400)
     thumbnail = info.get("thumbnail")
@@ -996,7 +1003,10 @@ def media_info(url):
     aspect_ratio = round(width / height, 4) if width and height else 16 / 9
     resolver_note = ""
     if str(info.get("extractor", "")).startswith("youtube_resolver"):
-        resolver_note = "Loaded via alternate API — no YouTube login cookies required."
+        if info.get("_ytdlp_only"):
+            resolver_note = "Thumbnail loaded. Download uses server PO-token engine (no cookies)."
+        else:
+            resolver_note = "Loaded via alternate API — no YouTube login cookies required."
     return {
         "success": True,
         "title": info.get("title") or "Media preview",
@@ -2435,13 +2445,21 @@ def direct_instagram_download_from_cache(url, quality):
 
 
 def download_youtube_via_resolver(url, quality):
-    """Download YouTube video through Invidious/Piped/Cobalt when yt-dlp is blocked."""
-    info = fetch_youtube_info(url)
+    """Download via Invidious/Piped/Cobalt; if APIs fail, force yt-dlp + PO token again."""
+    info = None
+    try:
+        info = fetch_youtube_info(url, require_formats=True)
+    except Exception:
+        info = None
+
+    if not info or not info.get("formats"):
+        return run_yt_dlp(url, "video", quality, skip_resolver_fallback=True)
+
     cache_media_info(url, info)
     has_ffmpeg = shutil.which("ffmpeg") is not None
     video_fmt, audio_fmt = pick_instagram_direct_formats(info, quality, has_ffmpeg)
     if not video_fmt:
-        raise ApiError("This video has no downloadable streams on alternate APIs. Try again in a minute.", 400)
+        return run_yt_dlp(url, "video", quality, skip_resolver_fallback=True)
 
     file_id = make_id()
     title = secure_filename((info.get("title") or "youtube_video")[:80]) or "youtube_video"
@@ -2500,12 +2518,12 @@ def download_youtube_via_resolver(url, quality):
     }
 
 
-def run_yt_dlp(url, mode, quality="1080"):
+def run_yt_dlp(url, mode, quality="1080", skip_resolver_fallback=False):
     output_prefix = make_id()
     output_template = str(DOWNLOAD_DIR / f"{output_prefix}_%(title).80s.%(ext)s")
     youtube_url = is_youtube_url(url)
     instagram_url = is_instagram_url(url)
-    clients = ["ios", "mweb", "tv", "web_creator", "web"] if youtube_url else ["web"]
+    clients = ["ios", "mweb", "tv", "web_creator", "web", "android"] if youtube_url else ["web"]
     if youtube_url:
         cookie_sources = youtube_cookie_sources()
     elif instagram_url:
@@ -2672,9 +2690,12 @@ def run_yt_dlp(url, mode, quality="1080"):
             raise
     
     if not info or not ydl:
-        if youtube_url and mode != "audio":
+        if youtube_url and mode != "audio" and not skip_resolver_fallback:
             return download_youtube_via_resolver(url, quality)
-        raise last_error or ApiError("Could not download this media.", 400)
+        raise last_error or ApiError(
+            simplify_download_error(str(last_error.message if isinstance(last_error, ApiError) else last_error or "")),
+            400,
+        )
 
     if mode != "audio" and not fallback_note:
         fallback_note = quality_note
@@ -3263,8 +3284,29 @@ def get_media_info():
         return jsonify(media_info(url))
     except ApiError as error:
         parsed = urlparse(url)
-        if any(domain in parsed.netloc.lower() for domain in ("instagram.com", "pinterest.")):
+        host = parsed.netloc.lower()
+        if any(domain in host for domain in ("instagram.com", "pinterest.")):
             return jsonify(social_preview_fallback(url, error.message))
+        if is_youtube_url(url):
+            video_id = extract_video_id(url)
+            if video_id:
+                info = minimal_youtube_info(url, video_id)
+                return jsonify(
+                    {
+                        "success": True,
+                        "title": info.get("title") or "YouTube video",
+                        "uploader": "youtube.com",
+                        "duration": None,
+                        "duration_text": "",
+                        "thumbnail": info.get("thumbnail"),
+                        "preview_video_url": "",
+                        "width": None,
+                        "height": 720,
+                        "aspect_ratio": 9 / 16 if "/shorts/" in url else 16 / 9,
+                        "webpage_url": url,
+                        "preview_note": "Thumbnail ready. Download uses PO-token engine on server.",
+                    }
+                )
         raise
 
 
