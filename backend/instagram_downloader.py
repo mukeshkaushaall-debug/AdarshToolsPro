@@ -13,6 +13,8 @@ import certifi
 import requests
 from yt_dlp import YoutubeDL
 
+from preview_utils import pick_preview_video_url
+
 MIN_VIDEO_BYTES = 150 * 1024
 IG_APP_ID = os.environ.get("X_IG_APP_ID", "936619743392459").strip() or "936619743392459"
 IG_UA = (
@@ -345,12 +347,14 @@ def format_chain(quality):
         if height and q != "best":
             h = str(max(144, min(4320, int(height))))
             return [
-                f"best[height<={h}][ext=mp4]/best[height<={h}]/best[ext=mp4]/best",
-                "bv*+ba/b",
-                "best",
+                f"bv*[height<={h}]+ba/b[height<={h}][acodec!=none]/b[height<={h}]",
+                f"best[height<={h}][ext=mp4]/best[height<={h}][acodec!=none]",
             ]
-        return ["best[ext=mp4]/best", "bv*+ba/b", "best"]
-    return ["best[ext=mp4]/best", "best"]
+        return ["bv*+ba/b[ext=mp4]/best[ext=mp4]/best", "best"]
+    if height and q != "best":
+        h = str(max(144, min(4320, int(height))))
+        return [f"best[height<={h}][acodec!=none][ext=mp4]/best[height<={h}][ext=mp4]"]
+    return ["best[ext=mp4]/best"]
 
 
 def try_urls_for(url):
@@ -512,18 +516,16 @@ def probe_instagram(url, cookie_sources=None):
             try:
                 with YoutubeDL(opts) as ydl:
                     info = ydl.extract_info(try_url, download=False)
-                preview = info.get("url") or ""
+                preview = pick_preview_video_url(info.get("formats") or [])
                 if not preview:
-                    for fmt in reversed(info.get("formats") or []):
-                        if fmt.get("url") and fmt.get("vcodec") not in (None, "none"):
-                            preview = fmt["url"]
-                            break
+                    preview = info.get("url") or ""
                 if preview:
                     return {
                         "title": info.get("title") or "Instagram reel",
                         "preview_video_url": preview,
                         "height": info.get("height") or 720,
                         "webpage_url": clean,
+                        "info": info,
                     }
             except Exception:
                 continue

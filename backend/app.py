@@ -30,6 +30,7 @@ from yt_dlp.version import __version__ as YTDLP_VERSION
 from yt_dlp.utils import DownloadError
 
 from instagram_downloader import download_instagram, probe_instagram
+from preview_utils import pick_preview_video_url
 
 BASE_DIR = Path(__file__).resolve().parent
 PROJECT_DIR = BASE_DIR.parent
@@ -866,6 +867,8 @@ def safe_download_path(filename):
 def instagram_media_info(url):
     try:
         data = probe_instagram(url, instagram_cookie_sources())
+        if data.get("info"):
+            cache_media_info(url, data["info"])
         return {
             "success": True,
             "title": data["title"],
@@ -885,6 +888,9 @@ def instagram_media_info(url):
 
 def download_instagram_reel(url, quality):
     try:
+        cached = direct_instagram_download_from_cache(url, quality)
+        if cached:
+            return cached
         return download_instagram(
             url,
             quality,
@@ -936,6 +942,8 @@ def media_info(url):
     thumbnail = info.get("thumbnail")
     if not thumbnail and info.get("thumbnails"):
         thumbnail = info["thumbnails"][-1].get("url")
+    if is_instagram_url(url):
+        cache_media_info(url, info)
     preview_video_url = pick_preview_video_url(info.get("formats") or [])
     duration = info.get("duration")
     width = info.get("width")
@@ -954,29 +962,6 @@ def media_info(url):
         "aspect_ratio": aspect_ratio,
         "webpage_url": info.get("webpage_url") or url,
     }
-
-
-def pick_preview_video_url(formats):
-    candidates = []
-    for item in formats:
-        preview_url = item.get("url")
-        if not preview_url:
-            continue
-        vcodec = item.get("vcodec")
-        if not vcodec or vcodec == "none":
-            continue
-        protocol = item.get("protocol") or ""
-        if protocol and not any(part in protocol for part in ("http", "https")):
-            continue
-        ext = (item.get("ext") or "").lower()
-        if ext not in {"mp4", "webm", "m4v", ""}:
-            continue
-        height = item.get("height") or 9999
-        filesize = item.get("filesize") or item.get("filesize_approx") or 0
-        acodec = item.get("acodec")
-        candidates.append((height > 540, height, not acodec or acodec == "none", filesize, preview_url))
-    candidates.sort()
-    return candidates[0][-1] if candidates else ""
 
 
 def postprocess_cutout(path, feather=2, background="transparent", hd_mode=False):
@@ -1445,8 +1430,13 @@ def file_has_audio_stream(path):
     return bool((result.stdout or "").strip())
 
 
-def merge_format_tail(has_ffmpeg):
-    """yt-dlp fallback chain tail that keeps audio instead of video-only streams."""
+def merge_format_tail(has_ffmpeg, requested_height=None):
+    """yt-dlp fallback chain tail; stays height-limited when user picked a resolution."""
+    if requested_height:
+        height = str(requested_height)
+        if has_ffmpeg:
+            return f"bv*[height<={height}]+ba/b[height<={height}][acodec!=none]"
+        return f"b[height<={height}][acodec!=none]/b[height<={height}]"
     return "bv*+ba/b" if has_ffmpeg else "b"
 
 
@@ -2016,23 +2006,25 @@ def choose_available_video_format(info, quality, has_ffmpeg):
         limited_videos = videos
         limited_progressive = progressive
 
-    tail = merge_format_tail(has_ffmpeg)
-    progressive_selected = max(limited_progressive or progressive, key=video_format_score, default=None)
+    tail = merge_format_tail(has_ffmpeg, requested_height)
+    progressive_selected = max(limited_progressive, key=video_format_score, default=None)
     if progressive_selected:
         progressive_height = int(format_number(progressive_selected.get("height")))
         note = ""
         if requested_height and progressive_height and progressive_height != requested_height:
-            note = f"Downloaded {progressive_height}p because {requested_height}p was not available."
+            note = f"Downloaded {progressive_height}p (closest available under {requested_height}p)."
         return f"{progressive_selected['format_id']}/{tail}", note, progressive_height
 
-    selected = max(limited_videos or videos, key=video_format_score, default=None)
+    selected = max(limited_videos, key=video_format_score, default=None)
     if not selected:
+        if requested_height:
+            return ytdlp_video_format(quality, has_ffmpeg)[0], f"{requested_height}p is not available for this video.", None
         return ytdlp_video_format(quality, has_ffmpeg)[0], "", None
 
     selected_height = int(format_number(selected.get("height")))
     note = ""
     if requested_height and selected_height and selected_height != requested_height:
-        note = f"Downloaded {selected_height}p because {requested_height}p was not available."
+        note = f"Downloaded {selected_height}p (closest available under {requested_height}p)."
 
     selected_id = selected["format_id"]
     if has_ffmpeg:
@@ -2056,8 +2048,8 @@ def instagram_ytdlp_format(quality, has_ffmpeg):
         return (
             f"bv*[height<={height}]+ba/"
             f"b[height<={height}][acodec!=none]/"
-            f"bv*+ba/b[height<={height}]/"
-            "bv*+ba/b"
+            f"b[height<={height}]/"
+            f"bv*[height<={height}]+ba"
         ), requested_height
     return "bv*+ba/b", None
 
@@ -2066,7 +2058,7 @@ def choose_instagram_video_format(info, quality, has_ffmpeg):
     """Prefer muxed Instagram streams when present, otherwise force bv*+ba merge."""
     requested_height = requested_video_height(quality)
     videos, audios, progressive = instagram_format_lists(info)
-    tail = merge_format_tail(has_ffmpeg)
+    tail = merge_format_tail(has_ffmpeg, requested_height)
 
     if requested_height:
         progressive_pool = [
@@ -2076,7 +2068,7 @@ def choose_instagram_video_format(info, quality, has_ffmpeg):
     else:
         progressive_pool = progressive
 
-    progressive_selected = max(progressive_pool or progressive, key=video_format_score, default=None)
+    progressive_selected = max(progressive_pool, key=video_format_score, default=None)
     if progressive_selected and not audios:
         height = int(format_number(progressive_selected.get("height")))
         note = ""
@@ -2100,8 +2092,8 @@ def ytdlp_video_format(quality, has_ffmpeg):
         return "bv*+ba/b" if has_ffmpeg else "b", None
     height = str(max(144, min(4320, int(height))))
     if has_ffmpeg:
-        return f"bv*[height<={height}]+ba/b[height<={height}]/bv*+ba/b", height
-    return f"b[height<={height}]/b", height
+        return f"bv*[height<={height}]+ba/b[height<={height}][acodec!=none]/b[height<={height}]", height
+    return f"b[height<={height}][acodec!=none]/b[height<={height}]", height
 
 
 def format_has_audio(item):
@@ -2139,8 +2131,7 @@ def instagram_format_lists(info):
 def limit_formats_by_height(items, requested_height):
     if not requested_height:
         return items
-    limited = [item for item in items if format_number(item.get("height")) <= requested_height]
-    return limited or items
+    return [item for item in items if format_number(item.get("height")) <= requested_height]
 
 
 def pick_instagram_direct_formats(info, quality, has_ffmpeg):
@@ -2445,9 +2436,16 @@ def run_yt_dlp(url, mode, quality="1080"):
                     time.sleep(1)
                     continue
                 elif mode != "audio" and format_error:
-                    # Last client, try best format fallback
-                    ydl_opts["format"] = "bv*+ba/b" if shutil.which("ffmpeg") else "b"
-                    fallback_note = "Downloaded best available quality from the formats exposed by the source."
+                    has_ffmpeg = shutil.which("ffmpeg") is not None
+                    if requested_video_height(quality):
+                        if instagram_url:
+                            ydl_opts["format"] = instagram_ytdlp_format(quality, has_ffmpeg)[0]
+                        else:
+                            ydl_opts["format"] = ytdlp_video_format(quality, has_ffmpeg)[0]
+                        fallback_note = f"Retried with closest quality at or below {requested_video_height(quality)}p."
+                    else:
+                        ydl_opts["format"] = "bv*+ba/b" if has_ffmpeg else "b"
+                        fallback_note = "Downloaded best available quality from the formats exposed by the source."
                     try:
                         info, ydl = extract_info_safe(
                             url,

@@ -451,7 +451,7 @@ function renderPreview(host, data) {
     host.classList.remove("embed-preview", "instagram-preview");
     host.innerHTML = `
       <div class="preview-media">
-        <video src="${data.preview_video_url}" ${data.thumbnail ? `poster="${data.thumbnail}"` : ""} controls muted autoplay loop playsinline preload="metadata"></video>
+        <video src="${data.preview_video_url}" ${data.thumbnail ? `poster="${data.thumbnail}"` : ""} controls playsinline preload="metadata"></video>
       </div>
       <div class="preview-meta">
         <strong>${data.title || "Media preview"}</strong>
