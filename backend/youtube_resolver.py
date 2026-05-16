@@ -167,31 +167,60 @@ def _try_piped(base, video_id):
   return None
 
 
-def _parallel_first(fetch_fn, bases, video_id, workers=16, overall_timeout=45):
+def _payload_quality_score(payload):
+  if not payload:
+    return (0, 0, 0)
+  max_height = 0
+  stream_count = 0
+  for stream in payload.get("formatStreams") or []:
+    stream_count += 1
+    max_height = max(max_height, parse_quality_height(stream.get("quality") or stream.get("resolution")))
+  for stream in payload.get("adaptiveFormats") or []:
+    media_type = (stream.get("type") or "").lower()
+    if media_type.startswith("audio"):
+      stream_count += 1
+      continue
+    stream_count += 1
+    max_height = max(max_height, parse_quality_height(stream.get("quality") or stream.get("resolution")))
+  for stream in payload.get("videoStreams") or []:
+    stream_count += 1
+    max_height = max(max_height, int(stream.get("height") or 0) or parse_quality_height(stream.get("quality")))
+  for stream in payload.get("audioStreams") or []:
+    stream_count += 1
+  return (max_height, stream_count, 1 if payload.get("_resolver") == "piped" else 0)
+
+
+def _parallel_best(fetch_fn, bases, video_id, workers=16, overall_timeout=45):
   if not bases:
     return None
   bases = bases[:30]
+  best = None
+  best_score = (-1, -1, -1)
   with ThreadPoolExecutor(max_workers=min(workers, len(bases))) as pool:
     futures = {pool.submit(fetch_fn, base, video_id): base for base in bases}
     try:
       for future in as_completed(futures, timeout=overall_timeout):
         try:
           result = future.result()
-          if result:
-            return result
         except Exception:
           continue
+        if not result:
+          continue
+        score = _payload_quality_score(result)
+        if score > best_score:
+          best = result
+          best_score = score
     except Exception:
       pass
-  return None
+  return best
 
 
 def fetch_invidious(video_id):
-  return _parallel_first(_try_invidious, discover_invidious_instances(), video_id)
+  return _parallel_best(_try_invidious, discover_invidious_instances(), video_id)
 
 
 def fetch_piped(video_id):
-  return _parallel_first(_try_piped, discover_piped_instances(), video_id)
+  return _parallel_best(_try_piped, discover_piped_instances(), video_id)
 
 
 def fetch_oembed(url):
@@ -273,6 +302,7 @@ def invidious_to_formats(data):
     if not media_url:
       continue
     height = parse_quality_height(stream.get("quality") or stream.get("resolution"))
+    bitrate = stream.get("bitrate") or stream.get("qualityLabel") or 0
     formats.append(
       {
         "format_id": f"inv-mux-{index}",
@@ -282,6 +312,8 @@ def invidious_to_formats(data):
         "vcodec": "avc1",
         "acodec": "aac",
         "protocol": "https",
+        "tbr": bitrate if isinstance(bitrate, (int, float)) else 0,
+        "filesize": stream.get("size") or stream.get("clen"),
       }
     )
   for index, stream in enumerate(data.get("adaptiveFormats") or []):
@@ -301,6 +333,8 @@ def invidious_to_formats(data):
         "acodec": "aac" if is_audio else "none",
         "protocol": "https",
         "abr": stream.get("bitrate") or 0,
+        "tbr": stream.get("bitrate") or 0,
+        "filesize": stream.get("size") or stream.get("clen"),
       }
     )
   return formats
@@ -323,6 +357,8 @@ def piped_to_formats(data):
         "vcodec": stream.get("codec") or "avc1",
         "acodec": "none" if video_only else "aac",
         "protocol": "https",
+        "tbr": stream.get("bitrate") or 0,
+        "filesize": stream.get("contentLength") or stream.get("size"),
       }
     )
   for index, stream in enumerate(data.get("audioStreams") or []):

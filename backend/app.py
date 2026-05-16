@@ -826,11 +826,7 @@ def social_preview_fallback(url, reason=""):
         "thumbnail": thumbnail,
         "width": None,
         "height": None,
-        "aspect_ratio": (
-            9 / 16
-            if "instagram" in host and re.search(r"/(reel|tv)/", parsed.path, re.I)
-            else (1.0 if "instagram" in host else youtube_preview_aspect_ratio(url))
-        ),
+        "aspect_ratio": 1.0 if "instagram" in host else youtube_preview_aspect_ratio(url),
         "webpage_url": url,
         "embed_url": embed_url,
         "embed_type": "instagram" if embed_url else "",
@@ -950,7 +946,7 @@ def instagram_media_info(url):
             "preview_video_url": preview_video_url,
             "width": None,
             "height": data["height"],
-            "aspect_ratio": 9 / 16 if "/reel/" in clean.lower() or "/tv/" in clean.lower() else 1.0,
+            "aspect_ratio": 9 / 16,
             "webpage_url": data["webpage_url"],
             "preview_note": "Preview includes audio when the source exposes separate tracks." if preview_video_url.startswith("/download/") else "",
         }
@@ -2147,15 +2143,15 @@ def choose_available_video_format(info, quality, has_ffmpeg):
         limited_progressive = progressive
 
     tail = merge_format_tail(has_ffmpeg, requested_height)
-    progressive_selected = pick_best_video_for_quality(limited_progressive, requested_height)
+    progressive_selected = max(limited_progressive, key=video_format_score, default=None)
     if progressive_selected:
-        progressive_height = format_height_value(progressive_selected)
+        progressive_height = int(format_number(progressive_selected.get("height")))
         note = ""
         if requested_height and progressive_height and progressive_height != requested_height:
             note = f"Downloaded {progressive_height}p (closest available under {requested_height}p)."
         return f"{progressive_selected['format_id']}/{tail}", note, progressive_height
 
-    selected = pick_best_video_for_quality(limited_videos, requested_height)
+    selected = max(limited_videos, key=video_format_score, default=None)
     if not selected:
         if requested_height:
             return ytdlp_video_format(quality, has_ffmpeg)[0], f"{requested_height}p is not available for this video.", None
@@ -2186,9 +2182,7 @@ def instagram_ytdlp_format(quality, has_ffmpeg):
     if requested_height:
         height = str(requested_height)
         return (
-            f"bv*[height={height}]+ba/"
             f"bv*[height<={height}]+ba/"
-            f"b[height={height}][acodec!=none]/"
             f"b[height<={height}][acodec!=none]/"
             f"b[height<={height}]/"
             f"bv*[height<={height}]+ba"
@@ -2234,18 +2228,8 @@ def ytdlp_video_format(quality, has_ffmpeg):
         return "bv*+ba/b" if has_ffmpeg else "b", None
     height = str(max(144, min(4320, int(height))))
     if has_ffmpeg:
-        return (
-            f"bv*[height={height}]+ba/"
-            f"bv*[height<={height}]+ba/"
-            f"b[height={height}][acodec!=none]/"
-            f"b[height<={height}][acodec!=none]/"
-            f"b[height<={height}]",
-            int(height),
-        )
-    return (
-        f"b[height={height}][acodec!=none]/b[height<={height}][acodec!=none]/b[height<={height}]",
-        int(height),
-    )
+        return f"bv*[height<={height}]+ba/b[height<={height}][acodec!=none]/b[height<={height}]", height
+    return f"b[height<={height}][acodec!=none]/b[height<={height}]", height
 
 
 def format_has_audio(item):
@@ -2283,46 +2267,23 @@ def instagram_format_lists(info):
 def limit_formats_by_height(items, requested_height):
     if not requested_height:
         return items
-    return [item for item in items if format_number(item.get("height")) <= requested_height]
+    capped = [item for item in items if format_number(item.get("height")) <= requested_height]
+    return capped or items
 
 
-def format_height_value(item):
-    return int(format_number(item.get("height")))
-
-
-def pick_best_video_for_quality(videos, requested_height):
-    if not videos:
-        return None
+def closest_height_pool(items, requested_height):
+    if not items:
+        return []
     if not requested_height:
-        return max(videos, key=video_format_score)
-    under_cap = [item for item in videos if format_height_value(item) > 0 and format_height_value(item) <= requested_height]
-    if not under_cap:
-        return None
-    return max(
-        under_cap,
-        key=lambda item: (
-            format_height_value(item),
-            format_number(item.get("tbr")),
-            format_number(item.get("vbr")),
-            format_number(item.get("filesize") or item.get("filesize_approx")),
-        ),
-    )
-
-
-def resolver_quality_too_low(selected_height, requested_height):
-    if not requested_height or not selected_height:
-        return False
-    if selected_height >= requested_height * 0.9:
-        return False
-    if requested_height >= 1080 and selected_height < 720:
-        return True
-    if requested_height >= 720 and selected_height < int(requested_height * 0.75):
-        return True
-    return selected_height < int(requested_height * 0.6)
+        return items
+    capped = [item for item in items if format_number(item.get("height")) <= requested_height]
+    if capped:
+        return capped
+    return sorted(items, key=lambda item: abs(format_number(item.get("height")) - requested_height))[:6]
 
 
 def pick_instagram_direct_formats(info, quality, has_ffmpeg):
-    """Pick video (+ optional separate audio) for direct CDN/resolver downloads."""
+    """Pick highest-quality video (+ audio) for direct CDN download."""
     videos, audios, progressive = instagram_format_lists(info)
     if not videos and info.get("url") and info.get("vcodec") and info.get("vcodec") != "none":
         videos = [info]
@@ -2330,39 +2291,66 @@ def pick_instagram_direct_formats(info, quality, has_ffmpeg):
         return None, None
 
     requested_height = requested_video_height(quality)
-    direct_videos = [item for item in videos if is_direct_http_format(item)]
-    direct_audios = [item for item in audios if is_direct_http_format(item)]
-    direct_progressive = [item for item in progressive if is_direct_http_format(item)]
+    direct_videos = [item for item in videos if is_direct_http_format(item)] or videos
+    direct_audios = [item for item in audios if is_direct_http_format(item)] or audios
+    direct_progressive = [item for item in progressive if is_direct_http_format(item)] or progressive
 
-    video_pool = direct_videos or videos
-    video_selected = pick_best_video_for_quality(video_pool, requested_height)
+    video_pool = closest_height_pool(direct_videos, requested_height)
+    video_selected = max(video_pool, key=video_format_score, default=None)
+    best_audio = max(direct_audios, key=audio_format_score, default=None) if direct_audios else None
 
-    if has_ffmpeg and direct_audios and video_selected and not format_has_audio(video_selected):
-        selected_height = format_height_value(video_selected)
-        if not resolver_quality_too_low(selected_height, requested_height):
-            return video_selected, max(direct_audios, key=audio_format_score)
+    if has_ffmpeg and video_selected and best_audio and not format_has_audio(video_selected):
+        return video_selected, best_audio
 
-    progressive_pool = direct_progressive or progressive
-    progressive_selected = pick_best_video_for_quality(
-        limit_formats_by_height(progressive_pool, requested_height),
-        requested_height,
-    )
-    if progressive_selected:
-        selected_height = format_height_value(progressive_selected)
-        if not resolver_quality_too_low(selected_height, requested_height):
-            return progressive_selected, None
-
-    if video_selected and format_has_audio(video_selected) and is_direct_http_format(video_selected):
-        selected_height = format_height_value(video_selected)
-        if not resolver_quality_too_low(selected_height, requested_height):
+    progressive_pool = closest_height_pool(direct_progressive, requested_height)
+    if progressive_pool:
+        best_progressive = max(progressive_pool, key=video_format_score)
+        if not video_selected:
+            return best_progressive, None
+        prog_h = format_number(best_progressive.get("height"))
+        vid_h = format_number(video_selected.get("height"))
+        if prog_h >= vid_h and format_has_audio(best_progressive):
+            return best_progressive, None
+        if format_has_audio(video_selected):
             return video_selected, None
+        if best_audio:
+            return video_selected, best_audio
+        return best_progressive, None
 
-    if video_selected and not direct_audios:
-        selected_height = format_height_value(video_selected)
-        if not resolver_quality_too_low(selected_height, requested_height):
-            return video_selected, None
-
+    if video_selected and format_has_audio(video_selected):
+        return video_selected, None
+    if video_selected and best_audio:
+        return video_selected, best_audio
+    if video_selected:
+        return video_selected, None
     return None, None
+
+
+def minimum_expected_video_bytes(height, duration_seconds=None):
+    height = int(format_number(height, 720))
+    floor_by_height = {
+        480: 3 * 1024 * 1024,
+        720: 8 * 1024 * 1024,
+        1080: 15 * 1024 * 1024,
+        1440: 25 * 1024 * 1024,
+        2160: 40 * 1024 * 1024,
+    }
+    minimum = 2 * 1024 * 1024
+    for cap, size in sorted(floor_by_height.items()):
+        if height <= cap:
+            minimum = size
+            break
+    else:
+        minimum = floor_by_height[2160]
+    if duration_seconds and duration_seconds > 0:
+        minimum = max(minimum, int(duration_seconds * 180 * 1024 / 8))
+    return minimum
+
+
+def downloaded_file_too_small(path, height, duration_seconds=None):
+    if not path.exists():
+        return True
+    return path.stat().st_size < minimum_expected_video_bytes(height, duration_seconds)
 
 
 def download_media_stream(media_url, headers, path):
@@ -2512,6 +2500,10 @@ def direct_instagram_download_from_cache(url, quality):
         delete_quietly(path)
         return None
 
+    if downloaded_file_too_small(path, video_format.get("height") or requested_video_height(quality), info.get("duration")):
+        delete_quietly(path)
+        return None
+
     selected = video_format
     height = selected.get("height") or info.get("height")
     note = "Downloaded from the preview session to avoid Instagram login re-checks."
@@ -2595,11 +2587,13 @@ def download_youtube_via_resolver(url, quality):
         raise ApiError("Download finished but the output file was empty.", 500)
 
     height = video_fmt.get("height") or info.get("height")
+    duration = info.get("duration")
+    requested = requested_video_height(quality)
+    if downloaded_file_too_small(path, height or requested, duration):
+        delete_quietly(path)
+        return run_yt_dlp(url, "video", quality, skip_resolver_fallback=True)
+
     note = f"Downloaded via {source} API (no YouTube cookies required)."
-    selected_height = int(format_number(height))
-    requested_height = requested_video_height(quality)
-    if requested_height and selected_height and selected_height != requested_height:
-        note = f"Downloaded {selected_height}p via {source} (closest stream under {requested_height}p)."
     return {
         "success": True,
         "title": info.get("title") or "YouTube video",
