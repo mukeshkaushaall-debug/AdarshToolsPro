@@ -1942,8 +1942,11 @@ def ytdlp_video_format(quality, has_ffmpeg):
     return f"b[height<={height}]/b", height
 
 
-def best_direct_video_format(info, quality):
-    """Select best video format, prioritizing formats with audio for Instagram."""
+def format_has_audio(item):
+    return bool(item and item.get("acodec") and item.get("acodec") != "none")
+
+
+def instagram_format_lists(info):
     formats = info.get("formats") or []
     videos = [
         item for item in formats
@@ -1952,58 +1955,51 @@ def best_direct_video_format(info, quality):
         and item.get("vcodec") != "none"
         and format_number(item.get("height")) > 0
     ]
-    
-    # Separate formats with and without audio
-    videos_with_audio = [
-        item for item in videos
-        if item.get("acodec") and item.get("acodec") != "none"
+    audios = [
+        item for item in formats
+        if item.get("url")
+        and item.get("acodec")
+        and item.get("acodec") != "none"
+        and (not item.get("vcodec") or item.get("vcodec") == "none")
     ]
-    
+    progressive = [item for item in videos if format_has_audio(item)]
+    return videos, audios, progressive
+
+
+def limit_formats_by_height(items, requested_height):
+    if not requested_height:
+        return items
+    limited = [item for item in items if format_number(item.get("height")) <= requested_height]
+    return limited or items
+
+
+def pick_instagram_direct_formats(info, quality, has_ffmpeg):
+    """Pick video (+ optional separate audio) for cached Instagram direct download."""
+    videos, audios, progressive = instagram_format_lists(info)
+    if not videos and info.get("url") and info.get("vcodec") and info.get("vcodec") != "none":
+        videos = [info]
+    if not videos:
+        return None, None
+
     requested_height = requested_video_height(quality)
-    
-    # First try to find format with audio at requested quality
-    if videos_with_audio:
-        if requested_height:
-            limited_with_audio = [item for item in videos_with_audio if format_number(item.get("height")) <= requested_height]
-            selected = max(limited_with_audio or videos_with_audio, key=video_format_score, default=None)
-        else:
-            selected = max(videos_with_audio, key=video_format_score, default=None)
-        
-        if selected:
-            return selected
-    
-    # Fallback to any video format if no audio version found
-    if requested_height:
-        limited = [item for item in videos if format_number(item.get("height")) <= requested_height]
-    else:
-        limited = videos
-    selected = max(limited or videos, key=video_format_score, default=None)
-    if selected:
-        return selected
-    if info.get("url"):
-        return info
-    return None
+    progressive_pool = limit_formats_by_height(progressive, requested_height)
+    if progressive_pool:
+        return max(progressive_pool, key=video_format_score), None
+
+    video_pool = limit_formats_by_height(videos, requested_height)
+    video_selected = max(video_pool or videos, key=video_format_score, default=None)
+    if not video_selected:
+        return None, None
+    if format_has_audio(video_selected):
+        return video_selected, None
+    if not audios:
+        return video_selected, None
+    if not has_ffmpeg:
+        return None, None
+    return video_selected, max(audios, key=audio_format_score)
 
 
-def direct_instagram_download_from_cache(url, quality):
-    info = cached_media_info(url)
-    if not info:
-        return None
-    selected = best_direct_video_format(info, quality)
-    if not selected:
-        return None
-    media_url = selected.get("url")
-    headers = {
-        "User-Agent": ytdlp_base_opts()["http_headers"]["User-Agent"],
-        "Referer": info.get("webpage_url") or url,
-        "Accept": "*/*",
-    }
-    headers.update(selected.get("http_headers") or {})
-    title = secure_filename((info.get("title") or "instagram_reel")[:80]) or "instagram_reel"
-    ext = (selected.get("ext") or "mp4").split("-", 1)[0]
-    if ext not in {"mp4", "mov", "webm", "m4v"}:
-        ext = "mp4"
-    path = DOWNLOAD_DIR / f"{make_id()}_{title}.{ext}"
+def download_media_stream(media_url, headers, path):
     try:
         with requests.get(media_url, headers=headers, timeout=60, stream=True, verify=certifi.where()) as response:
             response.raise_for_status()
@@ -2020,12 +2016,100 @@ def direct_instagram_download_from_cache(url, quality):
                         handle.write(chunk)
     except Exception:
         delete_quietly(path)
+        return False
+    return path.exists() and path.stat().st_size >= 1024
+
+
+def ffmpeg_merge_video_audio(video_path, audio_path, output_path):
+    ffmpeg = shutil.which("ffmpeg")
+    if not ffmpeg:
+        return False
+    cmd = [
+        ffmpeg,
+        "-y",
+        "-i",
+        str(video_path),
+        "-i",
+        str(audio_path),
+        "-c:v",
+        "copy",
+        "-c:a",
+        "aac",
+        "-b:a",
+        "128k",
+        "-movflags",
+        "+faststart",
+        str(output_path),
+    ]
+    try:
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=180)
+    except subprocess.TimeoutExpired:
+        return False
+    return result.returncode == 0 and output_path.exists() and output_path.stat().st_size >= 1024
+
+
+def media_download_headers(info, url, selected_format):
+    headers = {
+        "User-Agent": ytdlp_base_opts()["http_headers"]["User-Agent"],
+        "Referer": info.get("webpage_url") or url,
+        "Accept": "*/*",
+    }
+    headers.update(selected_format.get("http_headers") or {})
+    return headers
+
+
+def direct_instagram_download_from_cache(url, quality):
+    info = cached_media_info(url)
+    if not info:
         return None
+    has_ffmpeg = shutil.which("ffmpeg") is not None
+    video_format, audio_format = pick_instagram_direct_formats(info, quality, has_ffmpeg)
+    if not video_format:
+        return None
+
+    headers = media_download_headers(info, url, video_format)
+    title = secure_filename((info.get("title") or "instagram_reel")[:80]) or "instagram_reel"
+    file_id = make_id()
+    video_ext = (video_format.get("ext") or "mp4").split("-", 1)[0]
+    if video_ext not in {"mp4", "mov", "webm", "m4v"}:
+        video_ext = "mp4"
+    path = DOWNLOAD_DIR / f"{file_id}_{title}.mp4"
+    temp_paths = []
+
+    try:
+        if audio_format:
+            video_temp = DOWNLOAD_DIR / f"{file_id}_video.{video_ext}"
+            audio_ext = (audio_format.get("ext") or "m4a").split("-", 1)[0]
+            if audio_ext not in {"m4a", "mp4", "aac", "mp3", "webm"}:
+                audio_ext = "m4a"
+            audio_temp = DOWNLOAD_DIR / f"{file_id}_audio.{audio_ext}"
+            temp_paths.extend([video_temp, audio_temp])
+            audio_headers = media_download_headers(info, url, audio_format)
+            if not download_media_stream(video_format.get("url"), headers, video_temp):
+                return None
+            if not download_media_stream(audio_format.get("url"), audio_headers, audio_temp):
+                return None
+            if not ffmpeg_merge_video_audio(video_temp, audio_temp, path):
+                return None
+        else:
+            if not download_media_stream(video_format.get("url"), headers, path):
+                return None
+    except Exception:
+        delete_quietly(path)
+        return None
+    finally:
+        for temp_path in temp_paths:
+            delete_quietly(temp_path)
+
     if not path.exists() or path.stat().st_size < 1024:
         delete_quietly(path)
         return None
+
+    selected = video_format
     height = selected.get("height") or info.get("height")
     note = "Downloaded from the preview session to avoid Instagram login re-checks."
+    if audio_format:
+        note = "Downloaded from the preview session with audio merged for full sound."
     if requested_video_height(quality) and height and int(format_number(height)) != requested_video_height(quality):
         note = f"Downloaded {int(format_number(height))}p from the preview session because Instagram did not expose the requested quality."
     return {
