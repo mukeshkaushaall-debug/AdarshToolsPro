@@ -1,0 +1,2 @@
+﻿saveig ERR HTTPSConnectionPool(host='v3.saveig.app', port=443): Max retries exceeded with u
+saveig2 ERR HTTPSConnectionPool(host='saveig.app', port=443): Max retries exceeded with url:

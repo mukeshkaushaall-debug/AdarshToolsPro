@@ -173,12 +173,7 @@ async function fetchWithTimeout(url, options = {}, timeoutMs = 90000) {
         : "Request timed out. Please try a smaller file or restart the server.";
       throw new Error(message);
     }
-    const onLocal = location.hostname === "localhost" || location.hostname === "127.0.0.1";
-    throw new Error(
-      onLocal
-        ? "Could not reach the server. Make sure Flask is running on port 5000."
-        : "Server se connect nahi ho paya. 1-2 minute wait karke dubara try karo, ya quality Best rakho."
-    );
+    throw new Error("Could not reach the server. Make sure Flask is running on port 5000.");
   } finally {
     clearTimeout(timer);
   }
@@ -456,72 +451,11 @@ function previewVideoSrc(url) {
   return API_BASE + url;
 }
 
-function isYouTubePreviewUrl(url) {
-  if (!url) return false;
-  try {
-    const host = new URL(url).hostname.replace("www.", "").replace("m.", "");
-    return host.includes("youtube.com") || host === "youtu.be";
-  } catch {
-    return false;
-  }
-}
-
-function youtubePreviewAspectRatio(url, data = {}) {
-  const source = url || data.webpage_url || "";
-  try {
-    if (new URL(source).pathname.includes("/shorts/")) return 9 / 16;
-  } catch {
-    /* ignore */
-  }
-  const width = Number(data.width) || 0;
-  const height = Number(data.height) || 0;
-  if (width > 0 && height > 0) {
-    if (height > width * 1.05) return 9 / 16;
-    if (width > height * 1.05) return 16 / 9;
-    return width / height;
-  }
-  const ratio = Number(data.aspect_ratio);
-  if (ratio > 0) return ratio;
-  return 16 / 9;
-}
-
-function resolvePreviewAspectRatio(data, lockedRatio = 0) {
-  if (lockedRatio > 0) return lockedRatio;
-  const pageUrl = data.webpage_url || "";
-  if (isYouTubePreviewUrl(pageUrl)) return youtubePreviewAspectRatio(pageUrl, data);
-  if (data.embed_type === "instagram" || (data.uploader || "").includes("instagram")) return 9 / 16;
-  return Number(data.aspect_ratio) || 16 / 9;
-}
-
-function lockPreviewLayout(host, url, data = {}) {
-  let ratio = 9 / 16;
-  if (url && url.includes("instagram.com")) {
-    ratio = 9 / 16;
-  } else if (isYouTubePreviewUrl(url)) {
-    ratio = youtubePreviewAspectRatio(url, data);
-  } else {
-    ratio = Number(data.aspect_ratio) || 16 / 9;
-  }
-  host.dataset.previewRatio = String(ratio);
-  host.dataset.previewUrl = url || "";
-  applyPreviewLayout(host, ratio, url, data);
-}
-
-function applyPreviewLayout(host, ratio, pageUrl = "", data = {}) {
+function showPreviewLoading(host, ratio = 16 / 9) {
   host.style.setProperty("--preview-ratio", ratio);
-  host.classList.toggle("is-portrait", ratio < 1);
-  const youtube = isYouTubePreviewUrl(pageUrl || data.webpage_url || host.dataset.previewUrl || "");
-  const instagram = Boolean(data.embed_type === "instagram" || (data.uploader || "").includes("instagram") || host.classList.contains("instagram-preview"));
-  host.classList.toggle("youtube-shorts-preview", youtube && ratio < 1);
-  host.classList.toggle("youtube-video-preview", youtube && ratio >= 1);
-  host.classList.toggle("instagram-reel-preview", instagram && ratio < 1);
-}
-
-function showPreviewLoading(host, ratio = 16 / 9, pageUrl = "") {
-  const locked = Number(host.dataset.previewRatio) || ratio;
   host.classList.add("show");
   host.classList.remove("embed-preview", "instagram-preview");
-  applyPreviewLayout(host, locked, pageUrl);
+  host.classList.toggle("is-portrait", ratio < 1);
   host.innerHTML = `
     <div class="preview-media preview-skeleton" aria-hidden="true"></div>
     <div class="preview-meta">
@@ -531,12 +465,11 @@ function showPreviewLoading(host, ratio = 16 / 9, pageUrl = "") {
 }
 
 function renderPreview(host, data) {
-  const pageUrl = data.webpage_url || host.dataset.previewUrl || "";
-  const locked = Number(host.dataset.previewRatio) || 0;
-  const ratio = resolvePreviewAspectRatio(data, locked);
+  const ratio = Number(data.aspect_ratio) || 1.7778;
+  host.style.setProperty("--preview-ratio", ratio);
   host.classList.add("show");
-  applyPreviewLayout(host, ratio, pageUrl, data);
-  const embedUrl = data.embed_url || getYouTubeEmbedUrl(pageUrl);
+  host.classList.toggle("is-portrait", ratio < 1);
+  const embedUrl = data.embed_url || getYouTubeEmbedUrl(data.webpage_url);
   if (data.preview_video_url) {
     const videoSrc = previewVideoSrc(data.preview_video_url);
     host.classList.remove("embed-preview", "instagram-preview");
@@ -659,7 +592,7 @@ function buildSocialPreviewFromUrl(url) {
         success: true,
         title: "Instagram preview",
         uploader: "instagram.com",
-        aspect_ratio: 9 / 16,
+        aspect_ratio: 1,
         embed_type: "instagram",
         embed_url: `https://www.instagram.com/${type}/${instagramMatch[2]}/embed`,
         permalink: `https://www.instagram.com/${type}/${instagramMatch[2]}/`,
@@ -686,13 +619,9 @@ function initLinkPreview(form) {
     if (!isValidHttpUrl(url) || url === lastValue) return;
     lastValue = url;
     const fastPreview = buildFastPreviewFromUrl(url);
-    lockPreviewLayout(host, url, fastPreview || {});
-    showPreviewLoading(host, Number(host.dataset.previewRatio) || 16 / 9, url);
+    showPreviewLoading(host, fastPreview?.aspect_ratio || (url.includes("/shorts/") ? 9 / 16 : 16 / 9));
     try {
       const data = await postJSON("/api/media/info", { url }, 180000);
-      data.webpage_url = data.webpage_url || url;
-      if (isYouTubePreviewUrl(url)) data.aspect_ratio = Number(host.dataset.previewRatio) || youtubePreviewAspectRatio(url, data);
-      if ((data.uploader || "").includes("instagram")) data.aspect_ratio = 9 / 16;
       renderPreview(host, data);
     } catch {
       const fallback = buildSocialPreviewFromUrl(url);
@@ -726,8 +655,7 @@ function initUrlTool() {
     try {
       if (submit) submit.disabled = true;
       loading(true);
-      const timeoutMs = /\/api\/download\/(youtube|instagram)/.test(endpoint) ? 300000 : 90000;
-      const data = await postJSON(endpoint, body, timeoutMs);
+      const data = await postJSON(endpoint, body);
       showResult(data);
       toast("Download started.");
     } catch (err) {

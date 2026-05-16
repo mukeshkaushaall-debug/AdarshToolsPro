@@ -2,16 +2,58 @@
 import os
 import re
 import time
+import random
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from urllib.parse import parse_qs, quote, urlparse
 
 import certifi
 import requests
 
-UA = (
-    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
-    "(KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
-)
+# Multiple user agents for rotation
+USER_AGENTS = [
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36",
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36",
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:132.0) Gecko/20100101 Firefox/132.0",
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10.15; rv:132.0) Gecko/20100101 Firefox/132.0",
+    "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
+    "Mozilla/5.0 (iPhone; CPU iPhone OS 17_2 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.2 Mobile/15E148 Safari/604.1",
+    "Mozilla/5.0 (iPad; CPU OS 17_2 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.2 Mobile/15E148 Safari/604.1",
+    "Mozilla/5.0 (Linux; Android 14) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Mobile Safari/537.36",
+    "Mozilla/5.0 (Linux; Android 13) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Mobile Safari/537.36",
+]
+
+def get_random_user_agent():
+    """Get a random user agent from the pool."""
+    return random.choice(USER_AGENTS)
+
+def get_random_headers():
+    """Generate random headers to mimic different browsers."""
+    return {
+        "User-Agent": get_random_user_agent(),
+        "Accept": random.choice([
+            "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+            "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
+            "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
+        ]),
+        "Accept-Language": random.choice([
+            "en-US,en;q=0.9",
+            "en-US,en;q=0.9,hi;q=0.8",
+            "en-GB,en;q=0.9",
+            "en-IN,en;q=0.9,hi;q=0.8",
+        ]),
+        "Accept-Encoding": "gzip, deflate, br",
+        "DNT": random.choice(["1", "0"]),
+        "Connection": "keep-alive",
+        "Upgrade-Insecure-Requests": "1",
+        "Sec-Fetch-Dest": random.choice(["document", "empty"]),
+        "Sec-Fetch-Mode": random.choice(["navigate", "cors"]),
+        "Sec-Fetch-Site": random.choice(["none", "same-origin", "cross-site"]),
+        "Cache-Control": random.choice(["max-age=0", "no-cache"]),
+    }
+
+UA = USER_AGENTS[0]
 
 STATIC_INVIDIOUS = [
     "https://invidious.io",
@@ -26,6 +68,40 @@ STATIC_INVIDIOUS = [
     "https://invidious.nerdvpn.de",
     "https://yewtu.be",
     "https://invidious.f5.si",
+    "https://inv.riverside.rocks",
+    "https://invidious.snopyta.org",
+    "https://invidious.kavin.rocks",
+    "https://invidious.048596.xyz",
+    "https://invidious.namazso.eu",
+    "https://inv.bp.projectsegfau.lt",
+    "https://invidious.projectsegfau.lt",
+    "https://inv.mint.lgbt",
+    "https://invidious.esmailelbob.xyz",
+    "https://invidious.zee.li",
+    "https://invidious.tiekoetter.com",
+    "https://invidious.flokinet.is",
+    "https://invidious.perennialte.ch",
+    "https://invidious.namazso.eu",
+    "https://invidious.himiko.cloud",
+    "https://invidious.slipfox.xyz",
+    "https://invidious.silkky.cloud",
+    "https://invidious.tinfoil-hat.net",
+    "https://invidious.garudalinux.org",
+    "https://invidious.lunar.icu",
+    "https://invidious.catgirl.life",
+    "https://invidious.baczek.me",
+    "https://invidious.weblibre.org",
+    "https://invidious.blamefran.net",
+    "https://invidious.nerdvpn.de",
+    "https://invidious.jing.rocks",
+    "https://invidious.dhusch.de",
+    "https://invidious.privacyredirect.com",
+    "https://invidious.private.coffee",
+    "https://yt.artemislena.eu",
+    "https://invidious.fdn.fr",
+    "https://vid.puffyan.us",
+    "https://inv.nadeko.net",
+    "https://invidious.io",
 ]
 
 STATIC_PIPED = [
@@ -35,18 +111,77 @@ STATIC_PIPED = [
     "https://pipedapi.in.projectsegfau.lt",
     "https://pipedapi.leptons.xyz",
     "https://pipedapi.nosebs.ru",
+    "https://pipedapi.garudalinux.org",
+    "https://pipedapi.projectsegfau.lt",
+    "https://pipedapi.mint.lgbt",
+    "https://pipedapi.esmailelbob.xyz",
+    "https://pipedapi.zee.li",
+    "https://pipedapi.tiekoetter.com",
+    "https://pipedapi.flokinet.is",
+    "https://pipedapi.perennialte.ch",
+    "https://pipedapi.namazso.eu",
+    "https://pipedapi.himiko.cloud",
+    "https://pipedapi.slipfox.xyz",
+    "https://pipedapi.silkky.cloud",
+    "https://pipedapi.tinfoil-hat.net",
+    "https://pipedapi.catgirl.life",
+    "https://pipedapi.baczek.me",
+    "https://pipedapi.weblibre.org",
+    "https://pipedapi.blamefran.net",
+    "https://pipedapi.nerdvpn.de",
+    "https://pipedapi.jing.rocks",
+    "https://pipedapi.dhusch.de",
+    "https://pipedapi.privacyredirect.com",
+    "https://pipedapi.private.coffee",
 ]
 
 _instance_cache = {"time": 0, "invidious": [], "piped": []}
 INSTANCE_CACHE_TTL = 3600
 
+# Circuit breaker - track failed instances
+_failed_instances = {"invidious": set(), "piped": set()}
+_failed_instance_ttl = 300  # 5 minutes cooldown for failed instances
+
+# Proxy rotation support
+PROXY_LIST = []
+if os.environ.get("PROXY_LIST"):
+    PROXY_LIST = [p.strip() for p in os.environ.get("PROXY_LIST").split(",") if p.strip()]
+
+def get_random_proxy():
+    """Get a random proxy from the list if available."""
+    if PROXY_LIST:
+        return random.choice(PROXY_LIST)
+    return None
+
+def mark_instance_failed(instance_type, instance_url):
+    """Mark an instance as failed temporarily."""
+    _failed_instances[instance_type].add(instance_url)
+    # Clear old failures after TTL
+    time.sleep(0)  # Placeholder for cleanup logic
+
+def is_instance_failed(instance_type, instance_url):
+    """Check if an instance is marked as failed."""
+    return instance_url in _failed_instances[instance_type]
+
 
 def _request_json(url, method="GET", json_body=None, timeout=22):
+  # Add random delay to avoid rate limiting
+  time.sleep(random.uniform(0.1, 0.8))
+  
   proxies = {}
-  proxy = os.environ.get("YOUTUBE_PROXY", "").strip() or os.environ.get("HTTPS_PROXY", "").strip()
-  if proxy:
-    proxies = {"http": proxy, "https": proxy}
-  headers = {"User-Agent": UA, "Accept": "application/json"}
+  # Try random proxy from list first, then fall back to env proxy
+  random_proxy = get_random_proxy()
+  if random_proxy:
+    proxies = {"http": random_proxy, "https": random_proxy}
+  else:
+    proxy = os.environ.get("YOUTUBE_PROXY", "").strip() or os.environ.get("HTTPS_PROXY", "").strip()
+    if proxy:
+      proxies = {"http": proxy, "https": proxy}
+  
+  # Use random headers for each request
+  headers = get_random_headers()
+  headers["Accept"] = "application/json"
+  
   for verify in (certifi.where(), False):
     try:
       if method == "POST":
@@ -110,11 +245,13 @@ def discover_invidious_instances():
         continue
       health = item.get("health") or {}
       ratio = health.get("ratio")
-      if ratio is not None and ratio < 0.4:
+      if ratio is not None and ratio < 0.3:  # Lowered threshold for more instances
         continue
       discovered.append(uri)
   merged = list(dict.fromkeys(discovered + STATIC_INVIDIOUS + _env_list("INVIDIOUS_API_URLS")))
-  _instance_cache["invidious"] = merged[:40]
+  # Shuffle to randomize order
+  random.shuffle(merged)
+  _instance_cache["invidious"] = merged[:60]  # Increased from 40 to 60
   _instance_cache["time"] = now
   return _instance_cache["invidious"]
 
@@ -133,7 +270,9 @@ def discover_piped_instances():
       if api.startswith("http"):
         discovered.append(api)
   merged = list(dict.fromkeys(discovered + STATIC_PIPED + _env_list("PIPED_API_URLS")))
-  _instance_cache["piped"] = merged[:30]
+  # Shuffle to randomize order
+  random.shuffle(merged)
+  _instance_cache["piped"] = merged[:50]  # Increased from 30 to 50
   _instance_cache["time"] = now
   return _instance_cache["piped"]
 
@@ -150,77 +289,56 @@ def parse_quality_height(quality_label):
 
 
 def _try_invidious(base, video_id):
+  if is_instance_failed("invidious", base):
+    return None
   data = _request_json(f"{base.rstrip('/')}/api/v1/videos/{video_id}", timeout=20)
   if data and (data.get("formatStreams") or data.get("adaptiveFormats")):
     data["_resolver"] = "invidious"
     data["_resolver_base"] = base
     return data
+  # Mark as failed if no data
+  mark_instance_failed("invidious", base)
   return None
 
 
 def _try_piped(base, video_id):
+  if is_instance_failed("piped", base):
+    return None
   data = _request_json(f"{base.rstrip('/')}/streams/{video_id}", timeout=20)
   if data and (data.get("videoStreams") or data.get("audioStreams")):
     data["_resolver"] = "piped"
     data["_resolver_base"] = base
     return data
+  # Mark as failed if no data
+  mark_instance_failed("piped", base)
   return None
 
 
-def _payload_quality_score(payload):
-  if not payload:
-    return (0, 0, 0)
-  max_height = 0
-  stream_count = 0
-  for stream in payload.get("formatStreams") or []:
-    stream_count += 1
-    max_height = max(max_height, parse_quality_height(stream.get("quality") or stream.get("resolution")))
-  for stream in payload.get("adaptiveFormats") or []:
-    media_type = (stream.get("type") or "").lower()
-    if media_type.startswith("audio"):
-      stream_count += 1
-      continue
-    stream_count += 1
-    max_height = max(max_height, parse_quality_height(stream.get("quality") or stream.get("resolution")))
-  for stream in payload.get("videoStreams") or []:
-    stream_count += 1
-    max_height = max(max_height, int(stream.get("height") or 0) or parse_quality_height(stream.get("quality")))
-  for stream in payload.get("audioStreams") or []:
-    stream_count += 1
-  return (max_height, stream_count, 1 if payload.get("_resolver") == "piped" else 0)
-
-
-def _parallel_best(fetch_fn, bases, video_id, workers=16, overall_timeout=45):
+def _parallel_first(fetch_fn, bases, video_id, workers=32, overall_timeout=60):
   if not bases:
     return None
-  bases = bases[:30]
-  best = None
-  best_score = (-1, -1, -1)
+  bases = bases[:50]  # Increased from 30 to 50
   with ThreadPoolExecutor(max_workers=min(workers, len(bases))) as pool:
     futures = {pool.submit(fetch_fn, base, video_id): base for base in bases}
     try:
       for future in as_completed(futures, timeout=overall_timeout):
         try:
           result = future.result()
+          if result:
+            return result
         except Exception:
           continue
-        if not result:
-          continue
-        score = _payload_quality_score(result)
-        if score > best_score:
-          best = result
-          best_score = score
     except Exception:
       pass
-  return best
+  return None
 
 
 def fetch_invidious(video_id):
-  return _parallel_best(_try_invidious, discover_invidious_instances(), video_id)
+  return _parallel_first(_try_invidious, discover_invidious_instances(), video_id)
 
 
 def fetch_piped(video_id):
-  return _parallel_best(_try_piped, discover_piped_instances(), video_id)
+  return _parallel_first(_try_piped, discover_piped_instances(), video_id)
 
 
 def fetch_oembed(url):
@@ -231,47 +349,79 @@ def fetch_oembed(url):
 
 
 def fetch_cobalt(url):
+  # Add random delay
+  time.sleep(random.uniform(0.2, 0.6))
+  
+  # Try multiple Cobalt instances if configured
+  cobalt_bases = []
   base = os.environ.get("COBALT_API_URL", "").strip().rstrip("/")
-  if not base:
-    return None
-  endpoint = base if base.endswith("/api/json") else f"{base}/api/json"
-  headers = {"Accept": "application/json", "Content-Type": "application/json"}
-  api_key = os.environ.get("COBALT_API_KEY", "").strip()
-  if api_key:
-    headers["Authorization"] = f"Api-Key {api_key}"
-  proxies = {}
-  proxy = os.environ.get("YOUTUBE_PROXY", "").strip()
-  if proxy:
-    proxies = {"http": proxy, "https": proxy}
-  payload = {"url": url, "downloadMode": "auto", "videoQuality": "1080"}
-  data = None
-  for verify in (certifi.where(), False):
-    try:
-      response = requests.post(
-        endpoint,
-        json=payload,
-        headers=headers,
-        timeout=90,
-        verify=verify,
-        proxies=proxies or None,
-      )
-      response.raise_for_status()
-      data = response.json()
-      break
-    except requests.exceptions.SSLError:
-      if verify is False:
-        return None
-      continue
-    except Exception:
-      return None
-  if not data:
-    return None
-  if data.get("status") == "redirect" and data.get("url"):
-    return {"_resolver": "cobalt", "title": "YouTube video", "muxed_url": data["url"], "height": 1080}
-  if data.get("status") == "picker":
-    for item in data.get("picker") or []:
-      if item.get("type") == "video" and item.get("url"):
-        return {"_resolver": "cobalt", "title": "YouTube video", "muxed_url": item["url"], "height": 1080}
+  if base:
+    cobalt_bases.append(base)
+  
+  # Add additional Cobalt instances from env
+  additional = os.environ.get("COBALT_API_URLS", "").strip()
+  if additional:
+    cobalt_bases.extend([b.strip().rstrip("/") for b in additional.split(",") if b.strip()])
+  
+  # Default Cobalt instances
+  if not cobalt_bases:
+    cobalt_bases = [
+      "https://cobalt-api.kwiatekmiki.pl",
+      "https://cobalt-api.owo.si",
+      "https://cobalt-api.hope.so",
+    ]
+  
+  # Shuffle for randomization
+  random.shuffle(cobalt_bases)
+  
+  for base in cobalt_bases[:5]:  # Try up to 5 instances
+    endpoint = base if base.endswith("/api/json") else f"{base}/api/json"
+    headers = get_random_headers()
+    headers["Accept"] = "application/json"
+    headers["Content-Type"] = "application/json"
+    api_key = os.environ.get("COBALT_API_KEY", "").strip()
+    if api_key:
+      headers["Authorization"] = f"Api-Key {api_key}"
+    
+    proxies = {}
+    random_proxy = get_random_proxy()
+    if random_proxy:
+      proxies = {"http": random_proxy, "https": random_proxy}
+    else:
+      proxy = os.environ.get("YOUTUBE_PROXY", "").strip()
+      if proxy:
+        proxies = {"http": proxy, "https": proxy}
+    
+    payload = {"url": url, "downloadMode": "auto", "videoQuality": "1080"}
+    data = None
+    for verify in (certifi.where(), False):
+      try:
+        response = requests.post(
+          endpoint,
+          json=payload,
+          headers=headers,
+          timeout=90,
+          verify=verify,
+          proxies=proxies or None,
+        )
+        response.raise_for_status()
+        data = response.json()
+        break
+      except requests.exceptions.SSLError:
+        if verify is False:
+          continue
+        continue
+      except Exception:
+        continue
+    
+    if data:
+      if data.get("status") == "redirect" and data.get("url"):
+        return {"_resolver": "cobalt", "title": "YouTube video", "muxed_url": data["url"], "height": 1080}
+      if data.get("status") == "picker":
+        for item in data.get("picker") or []:
+          if item.get("type") == "video" and item.get("url"):
+            return {"_resolver": "cobalt", "title": "YouTube video", "muxed_url": item["url"], "height": 1080}
+  
   return None
 
 
@@ -302,7 +452,6 @@ def invidious_to_formats(data):
     if not media_url:
       continue
     height = parse_quality_height(stream.get("quality") or stream.get("resolution"))
-    bitrate = stream.get("bitrate") or stream.get("qualityLabel") or 0
     formats.append(
       {
         "format_id": f"inv-mux-{index}",
@@ -312,8 +461,6 @@ def invidious_to_formats(data):
         "vcodec": "avc1",
         "acodec": "aac",
         "protocol": "https",
-        "tbr": bitrate if isinstance(bitrate, (int, float)) else 0,
-        "filesize": stream.get("size") or stream.get("clen"),
       }
     )
   for index, stream in enumerate(data.get("adaptiveFormats") or []):
@@ -333,8 +480,6 @@ def invidious_to_formats(data):
         "acodec": "aac" if is_audio else "none",
         "protocol": "https",
         "abr": stream.get("bitrate") or 0,
-        "tbr": stream.get("bitrate") or 0,
-        "filesize": stream.get("size") or stream.get("clen"),
       }
     )
   return formats
@@ -357,8 +502,6 @@ def piped_to_formats(data):
         "vcodec": stream.get("codec") or "avc1",
         "acodec": "none" if video_only else "aac",
         "protocol": "https",
-        "tbr": stream.get("bitrate") or 0,
-        "filesize": stream.get("contentLength") or stream.get("size"),
       }
     )
   for index, stream in enumerate(data.get("audioStreams") or []):

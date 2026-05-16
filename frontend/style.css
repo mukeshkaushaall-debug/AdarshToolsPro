@@ -823,25 +823,13 @@ body.light .trust-item {
 .preview-media {
   width: 100%;
   min-width: 0;
-  max-width: 250px;
+  max-width: 100%;
+  max-height: min(42vh, 300px);
   aspect-ratio: var(--preview-ratio, 16 / 9);
-  height: auto;
-  max-height: min(46vh, 360px);
   overflow: hidden;
   display: grid;
   place-items: center;
   border-radius: 14px;
-  contain: layout style paint;
-  transition: none;
-}
-.link-preview.is-portrait .preview-media,
-.link-preview.instagram-reel-preview .preview-media {
-  max-width: 200px;
-  max-height: min(52vh, 420px);
-}
-.link-preview.youtube-video-preview .preview-media {
-  max-width: 280px;
-  max-height: min(40vh, 250px);
 }
 .preview-media.preview-skeleton {
   background:
@@ -913,8 +901,7 @@ body.light .trust-item {
 .link-preview.is-portrait {
   grid-template-columns: minmax(170px, 220px) minmax(0, 1fr);
 }
-.link-preview.instagram-preview.is-portrait,
-.link-preview.instagram-reel-preview {
+.link-preview.instagram-preview.is-portrait {
   grid-template-columns: minmax(250px, 326px) minmax(0, 1fr);
 }
 .link-preview.is-portrait .preview-media {

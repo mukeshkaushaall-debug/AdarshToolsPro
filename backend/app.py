@@ -13,6 +13,11 @@ import io
 import json
 import hashlib
 import zipfile
+import traceback
+import smtplib
+from email.mime.text import MIMEText
+from email.mime.multipart import MIMEMultipart
+from datetime import datetime
 from html import escape, unescape
 from pathlib import Path
 from urllib.parse import parse_qs, unquote, urlparse
@@ -145,6 +150,17 @@ REMBG_MODEL_DEFAULT = os.environ.get("REMBG_MODEL", "u2netp").strip() or "u2netp
 REMBG_MAX_SIDE = int(os.environ.get("REMBG_MAX_SIDE", "512"))
 _rembg_sessions = {}
 _rembg_session_lock = threading.Lock()
+
+# Email configuration for error notifications
+ADMIN_EMAIL = os.environ.get("ADMIN_EMAIL", "").strip()
+SMTP_SERVER = os.environ.get("SMTP_SERVER", "smtp.gmail.com").strip()
+SMTP_PORT = int(os.environ.get("SMTP_PORT", "587"))
+SMTP_USER = os.environ.get("SMTP_USER", "").strip()
+SMTP_PASSWORD = os.environ.get("SMTP_PASSWORD", "").strip()
+ENABLE_EMAIL_ALERTS = os.environ.get("ENABLE_EMAIL_ALERTS", "0").strip().lower() in {"1", "true", "yes"}
+
+# Generic error message for users
+GENERIC_ERROR_MESSAGE = "Something went wrong. Server is having a problem. Please try again after some time."
 
 TOOL_PAGE_SEO = {
     "youtube.html": {
@@ -357,32 +373,85 @@ class QuietYtdlpLogger:
         pass
 
 
+def send_error_email(error_type, error_message, traceback_str=None, request_info=None):
+    """Send error details to admin email."""
+    if not ENABLE_EMAIL_ALERTS or not ADMIN_EMAIL or not SMTP_USER or not SMTP_PASSWORD:
+        return False
+    
+    try:
+        msg = MIMEMultipart()
+        msg['From'] = SMTP_USER
+        msg['To'] = ADMIN_EMAIL
+        msg['Subject'] = f"[{SITE_NAME}] Error Alert: {error_type}"
+        
+        body = f"""
+Error Type: {error_type}
+Time: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
+
+Error Message:
+{error_message}
+
+"""
+        if traceback_str:
+            body += f"Traceback:\n{traceback_str}\n\n"
+        
+        if request_info:
+            body += f"Request Info:\n{request_info}\n"
+        
+        msg.attach(MIMEText(body, 'plain'))
+        
+        with smtplib.SMTP(SMTP_SERVER, SMTP_PORT) as server:
+            server.starttls()
+            server.login(SMTP_USER, SMTP_PASSWORD)
+            server.send_message(msg)
+        
+        return True
+    except Exception as e:
+        app.logger.error(f"Failed to send error email: {e}")
+        return False
+
+
 @app.errorhandler(ApiError)
 def handle_api_error(error):
-    return jsonify({"success": False, "error": error.message}), error.status_code
+    # Send real error to email, show generic message to user
+    request_info = f"Path: {request.path}\nMethod: {request.method}\nIP: {request.remote_addr}"
+    send_error_email("ApiError", error.message, request_info=request_info)
+    return jsonify({"success": False, "error": GENERIC_ERROR_MESSAGE}), error.status_code
 
 
 @app.errorhandler(413)
 def handle_too_large(_):
+    # File size error - keep this specific message as it's user-friendly
     return jsonify({"success": False, "error": "File is too large. Max upload size is 250 MB."}), 413
 
 
 @app.errorhandler(DownloadError)
 def handle_download_error(error):
-    return jsonify({"success": False, "error": simplify_download_error(str(error))}), 400
+    # Simplify error for user, send real error to email
+    real_error = str(error)
+    simplified_error = simplify_download_error(real_error)
+    request_info = f"Path: {request.path}\nURL: {request.form.get('url', 'N/A')}"
+    send_error_email("DownloadError", real_error, request_info=request_info)
+    return jsonify({"success": False, "error": simplified_error}), 400
 
 
 @app.errorhandler(HTTPException)
 def handle_http_error(error):
     if request.path.startswith("/api/"):
-        return jsonify({"success": False, "error": error.description}), error.code
+        request_info = f"Path: {request.path}\nCode: {error.code}"
+        send_error_email(f"HTTP {error.code}", error.description, request_info=request_info)
+        return jsonify({"success": False, "error": GENERIC_ERROR_MESSAGE}), error.code
     return error
 
 
 @app.errorhandler(Exception)
 def handle_unexpected(error):
+    # Log full error, send to email, show generic message to user
     app.logger.exception(error)
-    return jsonify({"success": False, "error": f"Server error: {str(error)[:180]}"}), 500
+    error_traceback = traceback.format_exc()
+    request_info = f"Path: {request.path}\nMethod: {request.method}\nIP: {request.remote_addr}"
+    send_error_email("Unexpected Error", str(error), error_traceback, request_info)
+    return jsonify({"success": False, "error": GENERIC_ERROR_MESSAGE}), 500
 
 
 def make_id():
@@ -455,31 +524,6 @@ def simplify_download_error(message):
 def is_youtube_url(url):
     host = urlparse(url).netloc.lower()
     return "youtube.com" in host or "youtu.be" in host
-
-
-def is_youtube_shorts_url(url):
-    parsed = urlparse(url or "")
-    if "/shorts/" in (parsed.path or "").lower():
-        return True
-    return False
-
-
-def youtube_preview_aspect_ratio(url, width=None, height=None):
-    """Long YouTube = 16:9 landscape; Shorts / vertical = 9:16 portrait."""
-    if is_youtube_shorts_url(url):
-        return round(9 / 16, 4)
-    try:
-        w = float(width or 0)
-        h = float(height or 0)
-    except (TypeError, ValueError):
-        w = h = 0.0
-    if w > 0 and h > 0:
-        if h > w * 1.05:
-            return round(9 / 16, 4)
-        if w > h * 1.05:
-            return round(16 / 9, 4)
-        return round(w / h, 4)
-    return round(16 / 9, 4)
 
 
 def is_instagram_url(url):
@@ -826,7 +870,7 @@ def social_preview_fallback(url, reason=""):
         "thumbnail": thumbnail,
         "width": None,
         "height": None,
-        "aspect_ratio": 1.0 if "instagram" in host else youtube_preview_aspect_ratio(url),
+        "aspect_ratio": 1.0 if "instagram" in host else 16 / 9,
         "webpage_url": url,
         "embed_url": embed_url,
         "embed_type": "instagram" if embed_url else "",
@@ -1025,10 +1069,7 @@ def media_info(url):
     duration = info.get("duration")
     width = info.get("width")
     height = info.get("height")
-    if youtube_url:
-        aspect_ratio = youtube_preview_aspect_ratio(url, width, height)
-    else:
-        aspect_ratio = round(width / height, 4) if width and height else 16 / 9
+    aspect_ratio = round(width / height, 4) if width and height else 16 / 9
     resolver_note = ""
     if str(info.get("extractor", "")).startswith("youtube_resolver"):
         if info.get("_ytdlp_only"):
@@ -2267,23 +2308,11 @@ def instagram_format_lists(info):
 def limit_formats_by_height(items, requested_height):
     if not requested_height:
         return items
-    capped = [item for item in items if format_number(item.get("height")) <= requested_height]
-    return capped or items
-
-
-def closest_height_pool(items, requested_height):
-    if not items:
-        return []
-    if not requested_height:
-        return items
-    capped = [item for item in items if format_number(item.get("height")) <= requested_height]
-    if capped:
-        return capped
-    return sorted(items, key=lambda item: abs(format_number(item.get("height")) - requested_height))[:6]
+    return [item for item in items if format_number(item.get("height")) <= requested_height]
 
 
 def pick_instagram_direct_formats(info, quality, has_ffmpeg):
-    """Pick highest-quality video (+ audio) for direct CDN download."""
+    """Pick video (+ optional separate audio) for cached Instagram direct download."""
     videos, audios, progressive = instagram_format_lists(info)
     if not videos and info.get("url") and info.get("vcodec") and info.get("vcodec") != "none":
         videos = [info]
@@ -2291,66 +2320,27 @@ def pick_instagram_direct_formats(info, quality, has_ffmpeg):
         return None, None
 
     requested_height = requested_video_height(quality)
-    direct_videos = [item for item in videos if is_direct_http_format(item)] or videos
-    direct_audios = [item for item in audios if is_direct_http_format(item)] or audios
-    direct_progressive = [item for item in progressive if is_direct_http_format(item)] or progressive
+    direct_videos = [item for item in videos if is_direct_http_format(item)]
+    direct_audios = [item for item in audios if is_direct_http_format(item)]
+    direct_progressive = [item for item in progressive if is_direct_http_format(item)]
 
-    video_pool = closest_height_pool(direct_videos, requested_height)
+    video_pool = limit_formats_by_height(direct_videos or videos, requested_height)
     video_selected = max(video_pool, key=video_format_score, default=None)
-    best_audio = max(direct_audios, key=audio_format_score, default=None) if direct_audios else None
 
-    if has_ffmpeg and video_selected and best_audio and not format_has_audio(video_selected):
-        return video_selected, best_audio
+    if has_ffmpeg and direct_audios and video_selected and not format_has_audio(video_selected):
+        return video_selected, max(direct_audios, key=audio_format_score)
 
-    progressive_pool = closest_height_pool(direct_progressive, requested_height)
+    progressive_pool = limit_formats_by_height(direct_progressive, requested_height)
     if progressive_pool:
-        best_progressive = max(progressive_pool, key=video_format_score)
-        if not video_selected:
-            return best_progressive, None
-        prog_h = format_number(best_progressive.get("height"))
-        vid_h = format_number(video_selected.get("height"))
-        if prog_h >= vid_h and format_has_audio(best_progressive):
-            return best_progressive, None
-        if format_has_audio(video_selected):
-            return video_selected, None
-        if best_audio:
-            return video_selected, best_audio
-        return best_progressive, None
+        return max(progressive_pool, key=video_format_score), None
 
-    if video_selected and format_has_audio(video_selected):
+    if video_selected and format_has_audio(video_selected) and is_direct_http_format(video_selected):
         return video_selected, None
-    if video_selected and best_audio:
-        return video_selected, best_audio
-    if video_selected:
+
+    if video_selected and not direct_audios:
         return video_selected, None
+
     return None, None
-
-
-def minimum_expected_video_bytes(height, duration_seconds=None):
-    height = int(format_number(height, 720))
-    floor_by_height = {
-        480: 3 * 1024 * 1024,
-        720: 8 * 1024 * 1024,
-        1080: 15 * 1024 * 1024,
-        1440: 25 * 1024 * 1024,
-        2160: 40 * 1024 * 1024,
-    }
-    minimum = 2 * 1024 * 1024
-    for cap, size in sorted(floor_by_height.items()):
-        if height <= cap:
-            minimum = size
-            break
-    else:
-        minimum = floor_by_height[2160]
-    if duration_seconds and duration_seconds > 0:
-        minimum = max(minimum, int(duration_seconds * 180 * 1024 / 8))
-    return minimum
-
-
-def downloaded_file_too_small(path, height, duration_seconds=None):
-    if not path.exists():
-        return True
-    return path.stat().st_size < minimum_expected_video_bytes(height, duration_seconds)
 
 
 def download_media_stream(media_url, headers, path):
@@ -2500,10 +2490,6 @@ def direct_instagram_download_from_cache(url, quality):
         delete_quietly(path)
         return None
 
-    if downloaded_file_too_small(path, video_format.get("height") or requested_video_height(quality), info.get("duration")):
-        delete_quietly(path)
-        return None
-
     selected = video_format
     height = selected.get("height") or info.get("height")
     note = "Downloaded from the preview session to avoid Instagram login re-checks."
@@ -2587,12 +2573,6 @@ def download_youtube_via_resolver(url, quality):
         raise ApiError("Download finished but the output file was empty.", 500)
 
     height = video_fmt.get("height") or info.get("height")
-    duration = info.get("duration")
-    requested = requested_video_height(quality)
-    if downloaded_file_too_small(path, height or requested, duration):
-        delete_quietly(path)
-        return run_yt_dlp(url, "video", quality, skip_resolver_fallback=True)
-
     note = f"Downloaded via {source} API (no YouTube cookies required)."
     return {
         "success": True,
@@ -3391,7 +3371,7 @@ def get_media_info():
                         "preview_video_url": "",
                         "width": None,
                         "height": 720,
-                        "aspect_ratio": youtube_preview_aspect_ratio(url),
+                        "aspect_ratio": 9 / 16 if "/shorts/" in url else 16 / 9,
                         "webpage_url": url,
                         "preview_note": "Thumbnail ready. Download uses PO-token engine on server.",
                     }
