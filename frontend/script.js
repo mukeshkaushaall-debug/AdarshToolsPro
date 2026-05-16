@@ -243,12 +243,16 @@ function renderCards() {
   });
 }
 
-async function postJSON(url, body) {
-  const res = await fetchWithTimeout(API_BASE + url, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(body),
-  });
+async function postJSON(url, body, timeoutMs = 90000) {
+  const res = await fetchWithTimeout(
+    API_BASE + url,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    },
+    timeoutMs
+  );
   return parseJSONResponse(res);
 }
 
@@ -441,6 +445,25 @@ function processInstagramEmbeds() {
   document.body.appendChild(script);
 }
 
+function previewVideoSrc(url) {
+  if (!url) return "";
+  if (url.startsWith("http://") || url.startsWith("https://") || url.startsWith("//")) return url;
+  return API_BASE + url;
+}
+
+function showPreviewLoading(host, ratio = 16 / 9) {
+  host.style.setProperty("--preview-ratio", ratio);
+  host.classList.add("show");
+  host.classList.remove("embed-preview", "instagram-preview");
+  host.classList.toggle("is-portrait", ratio < 1);
+  host.innerHTML = `
+    <div class="preview-media preview-skeleton" aria-hidden="true"></div>
+    <div class="preview-meta">
+      <strong>Loading preview</strong>
+      <p>Fetching video with audio…</p>
+    </div>`;
+}
+
 function renderPreview(host, data) {
   const ratio = Number(data.aspect_ratio) || 1.7778;
   host.style.setProperty("--preview-ratio", ratio);
@@ -448,10 +471,11 @@ function renderPreview(host, data) {
   host.classList.toggle("is-portrait", ratio < 1);
   const embedUrl = data.embed_url || getYouTubeEmbedUrl(data.webpage_url);
   if (data.preview_video_url) {
+    const videoSrc = previewVideoSrc(data.preview_video_url);
     host.classList.remove("embed-preview", "instagram-preview");
     host.innerHTML = `
       <div class="preview-media">
-        <video src="${data.preview_video_url}" ${data.thumbnail ? `poster="${data.thumbnail}"` : ""} controls playsinline preload="metadata"></video>
+        <video src="${videoSrc}" ${data.thumbnail ? `poster="${data.thumbnail}"` : ""} controls playsinline preload="metadata"></video>
       </div>
       <div class="preview-meta">
         <strong>${data.title || "Media preview"}</strong>
@@ -507,19 +531,6 @@ function buildFastPreviewFromUrl(url) {
   try {
     const parsed = new URL(url);
     const host = parsed.hostname.replace("www.", "");
-    const youtubeEmbed = getYouTubeEmbedUrl(url);
-    if (youtubeEmbed) {
-      const isShort = parsed.pathname.includes("/shorts/");
-      return {
-        success: true,
-        title: "YouTube video ready",
-        uploader: "youtube.com",
-        aspect_ratio: isShort ? 9 / 16 : 16 / 9,
-        embed_url: youtubeEmbed,
-        webpage_url: url,
-        preview_note: "Fast preview loaded. Start download when ready.",
-      };
-    }
     const instagram = buildSocialPreviewFromUrl(url);
     if (instagram) return instagram;
     if (host.includes("pinterest.")) {
@@ -590,15 +601,9 @@ function initLinkPreview(form) {
     if (!isValidHttpUrl(url) || url === lastValue) return;
     lastValue = url;
     const fastPreview = buildFastPreviewFromUrl(url);
-    if (fastPreview) {
-      renderPreview(host, fastPreview);
-      if (!isInstagramPreview(fastPreview)) return;
-    } else {
-      host.classList.add("show");
-      host.innerHTML = `<div class="preview-fallback">...</div><div><strong>Fetching preview</strong><p>Please wait a moment</p></div>`;
-    }
+    showPreviewLoading(host, fastPreview?.aspect_ratio || (url.includes("/shorts/") ? 9 / 16 : 16 / 9));
     try {
-      const data = await postJSON("/api/media/info", { url });
+      const data = await postJSON("/api/media/info", { url }, 180000);
       renderPreview(host, data);
     } catch {
       const fallback = buildSocialPreviewFromUrl(url);

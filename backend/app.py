@@ -30,7 +30,7 @@ from yt_dlp.version import __version__ as YTDLP_VERSION
 from yt_dlp.utils import DownloadError
 
 from instagram_downloader import download_instagram, probe_instagram
-from preview_utils import pick_preview_video_url
+from preview_utils import pick_preview_stream_pair, pick_preview_video_url
 
 BASE_DIR = Path(__file__).resolve().parent
 PROJECT_DIR = BASE_DIR.parent
@@ -101,6 +101,7 @@ CLEANUP_INTERVAL_SECONDS = 60
 _last_cleanup_at = 0
 MEDIA_INFO_CACHE_SECONDS = 10 * 60
 _media_info_cache = {}
+_preview_file_cache = {}
 FONT_DIR = Path(os.environ.get("WINDIR", "C:\\Windows")) / "Fonts"
 RUNTIME_COOKIES_DIR = Path(os.environ.get("TMPDIR", BASE_DIR)) / "youtube_cookies"
 RUNTIME_COOKIES_DIR.mkdir(parents=True, exist_ok=True)
@@ -867,8 +868,10 @@ def safe_download_path(filename):
 def instagram_media_info(url):
     try:
         data = probe_instagram(url, instagram_cookie_sources())
+        preview_video_url = data.get("preview_video_url") or ""
         if data.get("info"):
             cache_media_info(url, data["info"])
+            preview_video_url = resolve_preview_video_url(url, data["info"]) or preview_video_url
         return {
             "success": True,
             "title": data["title"],
@@ -876,11 +879,12 @@ def instagram_media_info(url):
             "duration": None,
             "duration_text": "",
             "thumbnail": "",
-            "preview_video_url": data["preview_video_url"],
+            "preview_video_url": preview_video_url,
             "width": None,
             "height": data["height"],
             "aspect_ratio": 9 / 16,
             "webpage_url": data["webpage_url"],
+            "preview_note": "Preview includes audio when the source exposes separate tracks." if preview_video_url.startswith("/download/") else "",
         }
     except Exception:
         return social_preview_fallback(url, "")
@@ -942,9 +946,8 @@ def media_info(url):
     thumbnail = info.get("thumbnail")
     if not thumbnail and info.get("thumbnails"):
         thumbnail = info["thumbnails"][-1].get("url")
-    if is_instagram_url(url):
-        cache_media_info(url, info)
-    preview_video_url = pick_preview_video_url(info.get("formats") or [])
+    cache_media_info(url, info)
+    preview_video_url = resolve_preview_video_url(url, info)
     duration = info.get("duration")
     width = info.get("width")
     height = info.get("height")
@@ -962,6 +965,55 @@ def media_info(url):
         "aspect_ratio": aspect_ratio,
         "webpage_url": info.get("webpage_url") or url,
     }
+
+
+def resolve_preview_video_url(url, info):
+    """Return a preview URL with audio — muxed CDN stream or server-merged MP4."""
+    key = media_cache_key(url)
+    cached = _preview_file_cache.get(key)
+    if cached and time.time() - cached["time"] < MEDIA_INFO_CACHE_SECONDS:
+        cached_path = DOWNLOAD_DIR / cached["filename"]
+        if cached_path.exists():
+            return public_download_url(cached["filename"])
+
+    video_fmt, audio_fmt = pick_preview_stream_pair(info, max_height=720)
+    if video_fmt and format_has_audio(video_fmt) and not audio_fmt:
+        direct_url = video_fmt.get("url") or ""
+        if direct_url.startswith("http"):
+            return direct_url
+
+    if video_fmt and audio_fmt and shutil.which("ffmpeg"):
+        file_id = make_id()
+        video_ext = (video_fmt.get("ext") or "mp4").split("-", 1)[0]
+        if video_ext not in {"mp4", "mov", "webm", "m4v"}:
+            video_ext = "mp4"
+        audio_ext = (audio_fmt.get("ext") or "m4a").split("-", 1)[0]
+        if audio_ext not in {"m4a", "mp4", "aac", "mp3", "webm"}:
+            audio_ext = "m4a"
+        video_temp = DOWNLOAD_DIR / f"{file_id}_preview_v.{video_ext}"
+        audio_temp = DOWNLOAD_DIR / f"{file_id}_preview_a.{audio_ext}"
+        output_path = DOWNLOAD_DIR / f"{file_id}_preview.mp4"
+        temp_paths = [video_temp, audio_temp]
+        try:
+            video_headers = media_download_headers(info, url, video_fmt)
+            audio_headers = media_download_headers(info, url, audio_fmt)
+            if download_media_stream(video_fmt.get("url"), video_headers, video_temp) and download_media_stream(
+                audio_fmt.get("url"), audio_headers, audio_temp
+            ) and ffmpeg_merge_video_audio(video_temp, audio_temp, output_path) and file_has_audio_stream(output_path):
+                _preview_file_cache[key] = {"time": time.time(), "filename": output_path.name}
+                return public_download_url(output_path.name)
+        except Exception:
+            delete_quietly(output_path)
+        finally:
+            for temp_path in temp_paths:
+                delete_quietly(temp_path)
+
+    direct = pick_preview_video_url(info.get("formats") or [])
+    if direct:
+        return direct
+    if video_fmt and video_fmt.get("url"):
+        return video_fmt["url"]
+    return info.get("url") or ""
 
 
 def postprocess_cutout(path, feather=2, background="transparent", hd_mode=False):
