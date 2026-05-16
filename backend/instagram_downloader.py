@@ -13,6 +13,7 @@ import certifi
 import requests
 from yt_dlp import YoutubeDL
 
+from instagram_reel import filter_by_quality, resolve_instagram_media, scrape_instagram_candidates
 from preview_utils import pick_preview_video_url
 
 MIN_VIDEO_BYTES = 150 * 1024
@@ -168,7 +169,8 @@ def resolve_graphql(shortcode, cookie_header=""):
 
     if not candidates:
         raise ValueError("GraphQL did not return a video URL")
-    return {"url": candidates[0], "title": title[:200]}
+    best = pick_best_cdn_url([{"url": u, "height": 720} for u in candidates])
+    return {"url": best, "title": title[:200]}
 
 
 def resolve_magic_params(shortcode, cookie_header=""):
@@ -194,10 +196,20 @@ def resolve_magic_params(shortcode, cookie_header=""):
             continue
         item = items[0]
         title = (item.get("caption") or {}).get("text") or "instagram_reel"
-        urls = list(walk_video_urls(item))
-        if urls:
-            return {"url": urls[0], "title": title[:200]}
+        urls = [{"url": u, "height": 720} for u in walk_video_urls(item)]
+        best = pick_best_cdn_url(urls)
+        if best:
+            return {"url": best, "title": title[:200]}
     raise ValueError("Magic params API did not return video")
+
+
+def resolve_scrape(url, quality="best"):
+    scraped = scrape_instagram_candidates(url)
+    candidates = filter_by_quality(scraped.get("candidates") or [], quality)
+    best = pick_best_cdn_url(candidates)
+    if not best:
+        raise ValueError("Scrape did not return a video URL")
+    return {"url": best, "title": (scraped.get("title") or "instagram_reel")[:200]}
 
 
 def resolve_cobalt(url):
@@ -357,12 +369,30 @@ def format_chain(quality):
     return ["best[ext=mp4]/best"]
 
 
+def pick_best_cdn_url(candidates):
+    if not candidates:
+        return None
+    if isinstance(candidates[0], str):
+        return max(candidates, key=len)
+    return max(
+        candidates,
+        key=lambda item: (
+            bool(item.get("has_audio")),
+            int(item.get("height") or 0),
+            len(item.get("url") or ""),
+        ),
+    ).get("url")
+
+
 def try_urls_for(url):
     clean = normalize_url(url)
     code = parse_shortcode(clean)
     urls = [clean]
     if code:
         urls.append(f"https://www.instagram.com/reel/{code}/")
+        urls.append(f"https://www.instagram.com/p/{code}/")
+        urls.append(f"https://www.instagram.com/reel/{code}/embed/captioned/")
+        urls.append(f"https://www.instagram.com/p/{code}/embed/captioned/")
     seen = set()
     ordered = []
     for item in urls:
@@ -393,9 +423,14 @@ def try_ytdlp(url, quality, download_dir, prefix, cookie_file=None):
     raise ValueError(errors[-1] if errors else "yt-dlp failed")
 
 
-def try_direct_api(shortcode, cookie_header, referer, download_dir, prefix, secure_filename):
+def try_direct_api(shortcode, cookie_header, referer, download_dir, prefix, secure_filename, url="", quality="best"):
     errors = []
-    resolvers = [resolve_graphql, resolve_magic_params]
+    resolvers = [
+        lambda code, header: resolve_graphql(code, header),
+        lambda code, header: resolve_magic_params(code, header),
+    ]
+    if url:
+        resolvers.append(lambda _code, _header: resolve_scrape(url, quality))
     for resolver in resolvers:
         try:
             meta = resolver(shortcode, cookie_header)
@@ -453,7 +488,16 @@ def download_instagram(url, quality, download_dir, make_id, secure_filename, pub
 
     cookie_header = cookie_header_from_file(cookie_files[0]) if cookie_files else ""
     try:
-        file_path, title = try_direct_api(shortcode, cookie_header, referer, download_dir, prefix, secure_filename)
+        file_path, title = try_direct_api(
+            shortcode,
+            cookie_header,
+            referer,
+            download_dir,
+            prefix,
+            secure_filename,
+            url=clean,
+            quality=quality,
+        )
         return {
             "success": True,
             "title": title,
@@ -464,6 +508,28 @@ def download_instagram(url, quality, download_dir, make_id, secure_filename, pub
             "note": "Downloaded via Instagram media API (works when server is rate-limited).",
             "video_height": None,
         }
+    except Exception as error:
+        errors.append(str(error)[:180])
+
+    try:
+        resolved = resolve_instagram_media(clean)
+        candidates = filter_by_quality(resolved.get("candidates") or [], quality)
+        best_url = pick_best_cdn_url(candidates)
+        if best_url:
+            title = secure_filename((resolved.get("title") or "instagram_reel")[:80]) or "instagram_reel"
+            path = download_dir / f"{prefix}_{title}.mp4"
+            if download_cdn_file(best_url, path, referer) and acceptable_output(path):
+                return {
+                    "success": True,
+                    "title": resolved.get("title") or "Instagram reel",
+                    "filename": path.name,
+                    "file_size": path.stat().st_size,
+                    "download_url": public_download_url(path.name),
+                    "download_label": "Download video",
+                    "note": "Downloaded via public page scrape (no login).",
+                    "video_height": int((candidates[0] or {}).get("height") or 0) or None,
+                }
+            delete_path(path)
     except Exception as error:
         errors.append(str(error)[:180])
 
@@ -530,14 +596,33 @@ def probe_instagram(url, cookie_sources=None):
             except Exception:
                 continue
 
+    for resolver in (
+        lambda: resolve_graphql(shortcode, cookie_header),
+        lambda: resolve_magic_params(shortcode, cookie_header),
+        lambda: resolve_scrape(clean),
+    ):
+        try:
+            meta = resolver()
+            return {
+                "title": meta.get("title") or "Instagram reel",
+                "preview_video_url": meta["url"],
+                "height": 720,
+                "webpage_url": clean,
+            }
+        except Exception:
+            continue
+
     try:
-        meta = resolve_graphql(shortcode, cookie_header)
-        return {
-            "title": meta.get("title") or "Instagram reel",
-            "preview_video_url": meta["url"],
-            "height": 720,
-            "webpage_url": clean,
-        }
+        resolved = resolve_instagram_media(clean)
+        candidates = resolved.get("candidates") or []
+        if candidates:
+            preview = pick_best_cdn_url(candidates)
+            return {
+                "title": resolved.get("title") or "Instagram reel",
+                "preview_video_url": preview,
+                "height": int(candidates[0].get("height") or 720),
+                "webpage_url": clean,
+            }
     except Exception:
         pass
 

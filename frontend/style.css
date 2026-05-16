@@ -901,6 +901,12 @@ body.light .trust-item {
 .link-preview.is-portrait {
   grid-template-columns: minmax(170px, 220px) minmax(0, 1fr);
 }
+.link-preview.youtube-shorts-preview .preview-media {
+  max-height: min(52vh, 420px);
+}
+.link-preview.youtube-video-preview .preview-media {
+  max-height: min(38vh, 260px);
+}
 .link-preview.instagram-preview.is-portrait {
   grid-template-columns: minmax(250px, 326px) minmax(0, 1fr);
 }

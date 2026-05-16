@@ -47,28 +47,33 @@ def _request_json(url, method="GET", json_body=None, timeout=22):
   if proxy:
     proxies = {"http": proxy, "https": proxy}
   headers = {"User-Agent": UA, "Accept": "application/json"}
-  try:
-    if method == "POST":
-      response = requests.post(
-        url,
-        json=json_body,
-        headers=headers,
-        timeout=timeout,
-        verify=certifi.where(),
-        proxies=proxies or None,
-      )
-    else:
-      response = requests.get(
-        url,
-        headers=headers,
-        timeout=timeout,
-        verify=certifi.where(),
-        proxies=proxies or None,
-      )
-    if response.status_code == 200:
-      return response.json()
-  except Exception:
-    return None
+  for verify in (certifi.where(), False):
+    try:
+      if method == "POST":
+        response = requests.post(
+          url,
+          json=json_body,
+          headers=headers,
+          timeout=timeout,
+          verify=verify,
+          proxies=proxies or None,
+        )
+      else:
+        response = requests.get(
+          url,
+          headers=headers,
+          timeout=timeout,
+          verify=verify,
+          proxies=proxies or None,
+        )
+      if response.status_code == 200:
+        return response.json()
+    except requests.exceptions.SSLError:
+      if verify is False:
+        return None
+      continue
+    except Exception:
+      return None
   return None
 
 
@@ -210,18 +215,27 @@ def fetch_cobalt(url):
   if proxy:
     proxies = {"http": proxy, "https": proxy}
   payload = {"url": url, "downloadMode": "auto", "videoQuality": "1080"}
-  try:
-    response = requests.post(
-      endpoint,
-      json=payload,
-      headers=headers,
-      timeout=90,
-      verify=certifi.where(),
-      proxies=proxies or None,
-    )
-    response.raise_for_status()
-    data = response.json()
-  except Exception:
+  data = None
+  for verify in (certifi.where(), False):
+    try:
+      response = requests.post(
+        endpoint,
+        json=payload,
+        headers=headers,
+        timeout=90,
+        verify=verify,
+        proxies=proxies or None,
+      )
+      response.raise_for_status()
+      data = response.json()
+      break
+    except requests.exceptions.SSLError:
+      if verify is False:
+        return None
+      continue
+    except Exception:
+      return None
+  if not data:
     return None
   if data.get("status") == "redirect" and data.get("url"):
     return {"_resolver": "cobalt", "title": "YouTube video", "muxed_url": data["url"], "height": 1080}
@@ -392,6 +406,7 @@ def fetch_youtube_info(url, require_formats=False):
   if not video_id:
     raise ValueError("Invalid YouTube URL")
 
+  best_partial = None
   with ThreadPoolExecutor(max_workers=3) as pool:
     inv_future = pool.submit(fetch_invidious, video_id)
     pip_future = pool.submit(fetch_piped, video_id)
@@ -401,10 +416,17 @@ def fetch_youtube_info(url, require_formats=False):
         payload = future.result(timeout=50)
         if payload:
           info = resolver_payload_to_info(payload, url, video_id)
-          if info.get("formats") or not require_formats:
+          if info.get("formats"):
             return info
+          if not require_formats:
+            return info
+          if not best_partial:
+            best_partial = info
       except Exception:
         continue
+
+  if best_partial:
+    return best_partial
 
   if require_formats:
     raise ValueError(

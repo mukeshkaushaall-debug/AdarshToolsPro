@@ -57,6 +57,58 @@ Optional:
 
 After adding or refreshing variables, redeploy and open `/api/instagram/status`. Confirm `cookie_profile_count` is at least `2`. For best reliability, paste the link, wait for the preview to load, then click download so the backend can reuse the preview session.
 
+## Step 4 — Bulletproof env setup (Railway Variables)
+
+Open Railway → your service → **Variables**. Add these in order (redeploy after each batch if you want to test incrementally).
+
+### Batch A — YouTube (recommended first)
+
+| Variable | What to paste | Required? |
+|----------|----------------|-----------|
+| `YOUTUBE_PO_TOKEN` | PO token from your bgutil / token provider | Strongly recommended |
+| `POT_PROVIDER_BASE_URL` | e.g. `http://127.0.0.1:4416` if you run bgutil beside the app | If using bgutil |
+| `YOUTUBE_VISITOR_DATA` | `VISITOR_INFO1_LIVE…` from a fresh YouTube tab (optional) | Optional |
+| `YOUTUBE_USE_COOKIES` | `1` only if you also add cookie profiles below | Optional |
+| `YOUTUBE_COOKIES_TEXT_1` | Netscape cookies export (full `youtube.com` session) | Optional |
+| `YOUTUBE_COOKIES_TEXT_2` | Second rotated profile | Optional |
+| `YOUTUBE_COOKIES_TEXT_3` | Third rotated profile | Optional |
+| `YOUTUBE_ALLOW_NO_COOKIES_FALLBACK` | `1` — keep Invidious/Piped when cookies fail | Recommended |
+
+**How to get YouTube cookies:** Chrome → logged into YouTube → extension “Get cookies.txt LOCALLY” → export → paste entire file into `YOUTUBE_COOKIES_TEXT_1`. Repeat with 2–3 accounts or fresh exports weekly.
+
+**Verify:** `https://YOUR-DOMAIN/api/youtube/status` → `cookie_profile_count` ≥ 2 if using cookies; `yt_dlp_version` present.
+
+### Batch B — Instagram
+
+| Variable | What to paste | Required? |
+|----------|----------------|-----------|
+| `INSTAGRAM_COOKIES_TEXT_1` | Netscape cookies for `instagram.com` (logged in) | Recommended |
+| `INSTAGRAM_COOKIES_TEXT_2` | Second profile | Recommended |
+| `INSTAGRAM_COOKIES_TEXT_3` | Third profile | Optional |
+| `INSTAGRAM_ALLOW_NO_COOKIES_FALLBACK` | `1` — scrape/GraphQL when cookies expire | Recommended |
+
+**Verify:** `https://YOUR-DOMAIN/api/instagram/status` → `cookie_profile_count` ≥ 2.
+
+**User tip:** Paste reel URL → wait for preview → then Download (reuses preview session).
+
+### Batch C — Shared fallback (both platforms)
+
+| Variable | Example | Notes |
+|----------|---------|--------|
+| `COBALT_API_URL` | `https://your-cobalt-instance.com` | Last resort downloader |
+| `COBALT_API_KEY` | API key if your Cobalt needs it | Optional |
+| `YOUTUBE_PROXY` or `HTTPS_PROXY` | `http://user:pass@host:port` | If Railway IP is blocked |
+| `INVIDIOUS_API_URLS` | `https://inv.nadeko.net,https://yewtu.be` | Extra Invidious mirrors |
+| `PIPED_API_URLS` | `https://pipedapi.kavin.rocks` | Extra Piped mirrors |
+| `SITE_URL` | `https://thugtools.xyz` | Canonical URLs / SEO |
+
+### Quick test after redeploy
+
+1. **Long YouTube** (`watch?v=…`) → preview box **wide 16:9**
+2. **Shorts** (`youtube.com/shorts/…`) → preview box **tall 9:16**
+3. **Instagram reel** → preview loads, download works
+4. Check status endpoints above if anything fails
+
 ## Notes
 
 - Use enough memory if possible. `rembg`/`onnxruntime`, PDF rendering, uploads, and video conversion can be memory-heavy.

@@ -457,6 +457,31 @@ def is_youtube_url(url):
     return "youtube.com" in host or "youtu.be" in host
 
 
+def is_youtube_shorts_url(url):
+    parsed = urlparse(url or "")
+    if "/shorts/" in (parsed.path or "").lower():
+        return True
+    return False
+
+
+def youtube_preview_aspect_ratio(url, width=None, height=None):
+    """Long YouTube = 16:9 landscape; Shorts / vertical = 9:16 portrait."""
+    if is_youtube_shorts_url(url):
+        return round(9 / 16, 4)
+    try:
+        w = float(width or 0)
+        h = float(height or 0)
+    except (TypeError, ValueError):
+        w = h = 0.0
+    if w > 0 and h > 0:
+        if h > w * 1.05:
+            return round(9 / 16, 4)
+        if w > h * 1.05:
+            return round(16 / 9, 4)
+        return round(w / h, 4)
+    return round(16 / 9, 4)
+
+
 def is_instagram_url(url):
     return "instagram.com" in urlparse(url).netloc.lower()
 
@@ -801,7 +826,7 @@ def social_preview_fallback(url, reason=""):
         "thumbnail": thumbnail,
         "width": None,
         "height": None,
-        "aspect_ratio": 1.0 if "instagram" in host else 16 / 9,
+        "aspect_ratio": 1.0 if "instagram" in host else youtube_preview_aspect_ratio(url),
         "webpage_url": url,
         "embed_url": embed_url,
         "embed_type": "instagram" if embed_url else "",
@@ -1000,7 +1025,10 @@ def media_info(url):
     duration = info.get("duration")
     width = info.get("width")
     height = info.get("height")
-    aspect_ratio = round(width / height, 4) if width and height else 16 / 9
+    if youtube_url:
+        aspect_ratio = youtube_preview_aspect_ratio(url, width, height)
+    else:
+        aspect_ratio = round(width / height, 4) if width and height else 16 / 9
     resolver_note = ""
     if str(info.get("extractor", "")).startswith("youtube_resolver"):
         if info.get("_ytdlp_only"):
@@ -3302,7 +3330,7 @@ def get_media_info():
                         "preview_video_url": "",
                         "width": None,
                         "height": 720,
-                        "aspect_ratio": 9 / 16 if "/shorts/" in url else 16 / 9,
+                        "aspect_ratio": youtube_preview_aspect_ratio(url),
                         "webpage_url": url,
                         "preview_note": "Thumbnail ready. Download uses PO-token engine on server.",
                     }

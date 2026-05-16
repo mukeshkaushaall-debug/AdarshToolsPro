@@ -451,11 +451,48 @@ function previewVideoSrc(url) {
   return API_BASE + url;
 }
 
-function showPreviewLoading(host, ratio = 16 / 9) {
+function isYouTubePreviewUrl(url) {
+  if (!url) return false;
+  try {
+    const host = new URL(url).hostname.replace("www.", "").replace("m.", "");
+    return host.includes("youtube.com") || host === "youtu.be";
+  } catch {
+    return false;
+  }
+}
+
+function youtubePreviewAspectRatio(url, data = {}) {
+  const source = url || data.webpage_url || "";
+  try {
+    if (new URL(source).pathname.includes("/shorts/")) return 9 / 16;
+  } catch {
+    /* ignore */
+  }
+  const width = Number(data.width) || 0;
+  const height = Number(data.height) || 0;
+  if (width > 0 && height > 0) {
+    if (height > width * 1.05) return 9 / 16;
+    if (width > height * 1.05) return 16 / 9;
+    return width / height;
+  }
+  const ratio = Number(data.aspect_ratio);
+  if (ratio > 0) return ratio;
+  return 16 / 9;
+}
+
+function resolvePreviewAspectRatio(data) {
+  const pageUrl = data.webpage_url || "";
+  if (isYouTubePreviewUrl(pageUrl)) return youtubePreviewAspectRatio(pageUrl, data);
+  return Number(data.aspect_ratio) || 16 / 9;
+}
+
+function showPreviewLoading(host, ratio = 16 / 9, pageUrl = "") {
   host.style.setProperty("--preview-ratio", ratio);
   host.classList.add("show");
   host.classList.remove("embed-preview", "instagram-preview");
   host.classList.toggle("is-portrait", ratio < 1);
+  host.classList.toggle("youtube-shorts-preview", ratio < 1 && isYouTubePreviewUrl(pageUrl));
+  host.classList.toggle("youtube-video-preview", ratio >= 1 && isYouTubePreviewUrl(pageUrl));
   host.innerHTML = `
     <div class="preview-media preview-skeleton" aria-hidden="true"></div>
     <div class="preview-meta">
@@ -465,10 +502,12 @@ function showPreviewLoading(host, ratio = 16 / 9) {
 }
 
 function renderPreview(host, data) {
-  const ratio = Number(data.aspect_ratio) || 1.7778;
+  const ratio = resolvePreviewAspectRatio(data);
   host.style.setProperty("--preview-ratio", ratio);
   host.classList.add("show");
   host.classList.toggle("is-portrait", ratio < 1);
+  host.classList.toggle("youtube-shorts-preview", ratio < 1 && isYouTubePreviewUrl(data.webpage_url));
+  host.classList.toggle("youtube-video-preview", ratio >= 1 && isYouTubePreviewUrl(data.webpage_url));
   const embedUrl = data.embed_url || getYouTubeEmbedUrl(data.webpage_url);
   if (data.preview_video_url) {
     const videoSrc = previewVideoSrc(data.preview_video_url);
@@ -619,9 +658,17 @@ function initLinkPreview(form) {
     if (!isValidHttpUrl(url) || url === lastValue) return;
     lastValue = url;
     const fastPreview = buildFastPreviewFromUrl(url);
-    showPreviewLoading(host, fastPreview?.aspect_ratio || (url.includes("/shorts/") ? 9 / 16 : 16 / 9));
+    showPreviewLoading(
+      host,
+      fastPreview?.aspect_ratio || youtubePreviewAspectRatio(url, fastPreview || {}),
+      url,
+    );
     try {
       const data = await postJSON("/api/media/info", { url }, 180000);
+      if (isYouTubePreviewUrl(url)) {
+        data.aspect_ratio = youtubePreviewAspectRatio(url, data);
+        data.webpage_url = data.webpage_url || url;
+      }
       renderPreview(host, data);
     } catch {
       const fallback = buildSocialPreviewFromUrl(url);
