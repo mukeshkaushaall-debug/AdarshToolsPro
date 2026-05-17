@@ -2200,13 +2200,24 @@ def choose_available_video_format(info, quality, has_ffmpeg):
         limited_progressive = progressive
 
     tail = merge_format_tail(has_ffmpeg, requested_height)
-    progressive_selected = max(limited_progressive, key=video_format_score, default=None)
-    if progressive_selected:
-        progressive_height = int(format_number(progressive_selected.get("height")))
-        note = ""
-        if requested_height and progressive_height and progressive_height != requested_height:
-            note = f"Downloaded {progressive_height}p (closest available under {requested_height}p)."
-        return f"{progressive_selected['format_id']}/{tail}", note, progressive_height
+
+    if has_ffmpeg:
+        # YouTube HD/2K/4K streams are usually video-only. Prefer those and merge
+        # with audio; otherwise 720p/1440p can silently fall back to tiny 360p MP4s.
+        video_only = [item for item in limited_videos if not format_has_audio(item)]
+        selected = max(video_only or limited_videos, key=video_format_score, default=None)
+        if selected:
+            selected_height = int(format_number(selected.get("height")))
+            note = ""
+            if requested_height and selected_height and selected_height != requested_height:
+                note = f"Downloaded {selected_height}p (closest available under {requested_height}p)."
+            selected_id = selected["format_id"]
+            if format_has_audio(selected):
+                return f"{selected_id}/{tail}", note, selected_height
+            audio = max(audios, key=audio_format_score, default=None)
+            if audio:
+                return f"{selected_id}+{audio['format_id']}/{tail}", note, selected_height
+            return ytdlp_video_format(quality, has_ffmpeg)[0], note, selected_height
 
     selected = max(limited_videos, key=video_format_score, default=None)
     if not selected:
@@ -2214,20 +2225,18 @@ def choose_available_video_format(info, quality, has_ffmpeg):
             return ytdlp_video_format(quality, has_ffmpeg)[0], f"{requested_height}p is not available for this video.", None
         return ytdlp_video_format(quality, has_ffmpeg)[0], "", None
 
+    progressive_selected = max(limited_progressive, key=video_format_score, default=None)
+    if progressive_selected:
+        selected = progressive_selected
+
     selected_height = int(format_number(selected.get("height")))
     note = ""
     if requested_height and selected_height and selected_height != requested_height:
         note = f"Downloaded {selected_height}p (closest available under {requested_height}p)."
 
     selected_id = selected["format_id"]
-    if has_ffmpeg:
-        if format_has_audio(selected):
-            return f"{selected_id}/{tail}", note, selected_height
-        audio = max(audios, key=audio_format_score, default=None)
-        if audio:
-            return f"{selected_id}+{audio['format_id']}/{tail}", note, selected_height
-        return ytdlp_video_format(quality, has_ffmpeg)[0], note, selected_height
-
+    if format_has_audio(selected):
+        return f"{selected_id}/b[acodec!=none]/b", note, selected_height
     return "b[acodec!=none]/b", "Downloaded best available single-file quality because FFmpeg merge is not available.", None
 
 
