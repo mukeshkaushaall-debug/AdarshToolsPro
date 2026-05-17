@@ -413,10 +413,10 @@ Error Message:
 
 @app.errorhandler(ApiError)
 def handle_api_error(error):
-    # Send real error to email, show generic message to user
     request_info = f"Path: {request.path}\nMethod: {request.method}\nIP: {request.remote_addr}"
+    app.logger.warning("ApiError on %s: %s", request.path, error.message)
     send_error_email("ApiError", error.message, request_info=request_info)
-    return jsonify({"success": False, "error": GENERIC_ERROR_MESSAGE}), error.status_code
+    return jsonify({"success": False, "error": safe_public_error(error.message)}), error.status_code
 
 
 @app.errorhandler(413)
@@ -456,6 +456,19 @@ def handle_unexpected(error):
 
 def make_id():
     return uuid.uuid4().hex
+
+
+def safe_public_error(message):
+    """Return intentional API errors without leaking tracebacks or local paths."""
+    text = simplify_download_error(str(message or "")).strip()
+    if not text:
+        return GENERIC_ERROR_MESSAGE
+    lowered = text.lower()
+    if any(token in lowered for token in ("traceback", "file \"", "errno", "winerror")):
+        return GENERIC_ERROR_MESSAGE
+    text = re.sub(r"[A-Za-z]:\\[^\s]+", "server file", text)
+    text = re.sub(r"/(?:app|home|tmp|var)/[^\s]+", "server file", text)
+    return text[:320]
 
 
 def public_download_url(filename):
