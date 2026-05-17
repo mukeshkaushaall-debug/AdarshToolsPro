@@ -34,6 +34,8 @@ YouTube runs in forced cookieless mode by default. The backend first tries yt-dl
 - `COBALT_API_URL=https://your-cobalt-relay.example/`
 - `COBALT_API_URLS=https://backup-1.example/,https://backup-2.example/`
 
+For strongest uptime, run 2-3 Cobalt relays in different regions/providers and list every relay in `COBALT_API_URLS`. The app rotates configured relays, cools down failed relays, and reuses fresh preview formats before asking YouTube to extract again.
+
 Cookies are ignored unless you explicitly set `YOUTUBE_FORCE_COOKIELESS=0` and `YOUTUBE_USE_COOKIES=1`. If you choose to use cookies for content you are allowed to access, add multiple fresh cookie profiles in Railway **Variables** so the backend can retry automatically:
 
 - `YOUTUBE_COOKIES_TEXT_1`

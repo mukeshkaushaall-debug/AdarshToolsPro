@@ -106,6 +106,9 @@ YOUTUBE_PROXY=http://your-proxy.com:8080
   COBALT_API_URLS=https://relay1.example/,https://relay2.example/
   ```
 - Random instance selection
+- Failed relay cooldown before retrying it again
+- Best-quality resolver scoring instead of first-response-wins
+- Fresh preview-session stream reuse before a second YouTube extraction
 - Proxy support
 - Random headers
 

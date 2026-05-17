@@ -139,7 +139,7 @@ _instance_cache = {"time": 0, "invidious": [], "piped": []}
 INSTANCE_CACHE_TTL = 3600
 
 # Circuit breaker - track failed instances
-_failed_instances = {"invidious": {}, "piped": {}}
+_failed_instances = {"invidious": {}, "piped": {}, "cobalt": {}}
 _failed_instance_ttl = 300  # 5 minutes cooldown for failed instances
 
 # Proxy rotation support
@@ -156,6 +156,10 @@ def get_random_proxy():
 def mark_instance_failed(instance_type, instance_url):
     """Mark an instance as failed temporarily."""
     _failed_instances[instance_type][instance_url] = time.time()
+
+def mark_instance_success(instance_type, instance_url):
+    """Clear failure state after a successful response."""
+    _failed_instances[instance_type].pop(instance_url, None)
 
 def is_instance_failed(instance_type, instance_url):
     """Check if an instance is marked as failed."""
@@ -299,6 +303,7 @@ def _try_invidious(base, video_id):
   if data and (data.get("formatStreams") or data.get("adaptiveFormats")):
     data["_resolver"] = "invidious"
     data["_resolver_base"] = base
+    mark_instance_success("invidious", base)
     return data
   # Mark as failed if no data
   mark_instance_failed("invidious", base)
@@ -312,6 +317,7 @@ def _try_piped(base, video_id):
   if data and (data.get("videoStreams") or data.get("audioStreams")):
     data["_resolver"] = "piped"
     data["_resolver_base"] = base
+    mark_instance_success("piped", base)
     return data
   # Mark as failed if no data
   mark_instance_failed("piped", base)
@@ -322,18 +328,22 @@ def _parallel_first(fetch_fn, bases, video_id, workers=32, overall_timeout=60):
   if not bases:
     return None
   bases = bases[:50]  # Increased from 30 to 50
-  with ThreadPoolExecutor(max_workers=min(workers, len(bases))) as pool:
-    futures = {pool.submit(fetch_fn, base, video_id): base for base in bases}
-    try:
-      for future in as_completed(futures, timeout=overall_timeout):
-        try:
-          result = future.result()
-          if result:
-            return result
-        except Exception:
-          continue
-    except Exception:
-      pass
+  pool = ThreadPoolExecutor(max_workers=min(workers, len(bases)))
+  futures = {pool.submit(fetch_fn, base, video_id): base for base in bases}
+  try:
+    for future in as_completed(futures, timeout=overall_timeout):
+      try:
+        result = future.result()
+        if result:
+          return result
+      except Exception:
+        continue
+  except Exception:
+    pass
+  finally:
+    for future in futures:
+      future.cancel()
+    pool.shutdown(wait=False, cancel_futures=True)
   return None
 
 
@@ -420,6 +430,8 @@ def fetch_cobalt(url, quality="1080"):
   random.shuffle(bases)
 
   for base in bases[:5]:  # Try up to 5 configured instances
+    if is_instance_failed("cobalt", base):
+      continue
     headers = get_random_headers()
     headers["Accept"] = "application/json"
     headers["Content-Type"] = "application/json"
@@ -470,12 +482,14 @@ def fetch_cobalt(url, quality="1080"):
       if data:
         media_url = cobalt_url_from_response(data)
         if media_url:
+          mark_instance_success("cobalt", base)
           return {
             "_resolver": "cobalt",
             "title": "YouTube video",
             "muxed_url": media_url,
             "height": 1080 if cobalt_quality(quality) == "max" else int(cobalt_quality(quality)),
           }
+    mark_instance_failed("cobalt", base)
   
   return None
 
@@ -634,35 +648,85 @@ def resolver_payload_to_info(payload, url, video_id):
   }
 
 
+def requested_height_for_quality(quality):
+  value = str(quality or "best").lower()
+  if value == "best":
+    return 0
+  match = re.search(r"\d+", value)
+  return max(144, min(4320, int(match.group(0)))) if match else 0
+
+
+def info_formats_height(info):
+  heights = [
+    int(item.get("height") or 0)
+    for item in info.get("formats") or []
+    if int(item.get("height") or 0) > 0
+  ]
+  return max(heights or [int(info.get("height") or 0) or 0])
+
+
+def info_audio_ready(info):
+  formats = info.get("formats") or []
+  has_muxed = any(
+    item.get("vcodec") and item.get("vcodec") != "none" and item.get("acodec") and item.get("acodec") != "none"
+    for item in formats
+  )
+  has_video = any(item.get("vcodec") and item.get("vcodec") != "none" for item in formats)
+  has_audio = any(item.get("acodec") and item.get("acodec") != "none" for item in formats)
+  return has_muxed or (has_video and has_audio)
+
+
+def info_quality_score(info, quality):
+  requested = requested_height_for_quality(quality)
+  height = info_formats_height(info)
+  resolver = str(info.get("extractor") or "")
+  resolver_bonus = 30 if "cobalt" in resolver else 20 if "piped" in resolver else 10 if "invidious" in resolver else 0
+  audio_bonus = 100 if info_audio_ready(info) else 0
+  if requested:
+    height_score = height if height <= requested else requested - (height - requested) * 0.2
+  else:
+    height_score = height
+  return height_score + audio_bonus + resolver_bonus
+
+
 def fetch_youtube_info(url, require_formats=False, quality="1080"):
   """Try many APIs in parallel; oEmbed thumbnail/title always available as last resort."""
   video_id = extract_video_id(url)
   if not video_id:
     raise ValueError("Invalid YouTube URL")
 
+  best_info = None
   best_partial = None
-  with ThreadPoolExecutor(max_workers=3) as pool:
-    futures = [
-      pool.submit(fetch_invidious, video_id),
-      pool.submit(fetch_piped, video_id),
-      pool.submit(fetch_cobalt, url, quality),
-    ]
-    try:
-      for future in as_completed(futures, timeout=65):
-        try:
-          payload = future.result()
-          if payload:
-            info = resolver_payload_to_info(payload, url, video_id)
-            if info.get("formats"):
-              return info
-            if not require_formats:
-              return info
-            if not best_partial:
-              best_partial = info
-        except Exception:
+  pool = ThreadPoolExecutor(max_workers=3)
+  futures = [
+    pool.submit(fetch_invidious, video_id),
+    pool.submit(fetch_piped, video_id),
+    pool.submit(fetch_cobalt, url, quality),
+  ]
+  try:
+    for future in as_completed(futures, timeout=65):
+      try:
+        payload = future.result()
+        if not payload:
           continue
-    except Exception:
-      pass
+        info = resolver_payload_to_info(payload, url, video_id)
+        if info.get("formats"):
+          if not best_info or info_quality_score(info, quality) > info_quality_score(best_info, quality):
+            best_info = info
+          continue
+        if not require_formats and not best_partial:
+          best_partial = info
+      except Exception:
+        continue
+  except Exception:
+    pass
+  finally:
+    for future in futures:
+      future.cancel()
+    pool.shutdown(wait=False, cancel_futures=True)
+
+  if best_info:
+    return best_info
 
   if best_partial:
     return best_partial

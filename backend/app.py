@@ -777,6 +777,16 @@ def youtube_cookie_status():
         )
         status["resolver_fallbacks"] = ["yt-dlp+bgutil", "invidious-parallel", "piped-parallel", "cobalt", "oembed"]
         status["cobalt_configured"] = bool(os.environ.get("COBALT_API_URL", "").strip() or os.environ.get("COBALT_API_URLS", "").strip())
+        status["cobalt_relay_count"] = len(
+            [
+                item
+                for item in ",".join(
+                    [os.environ.get("COBALT_API_URL", ""), os.environ.get("COBALT_API_URLS", "")]
+                ).split(",")
+                if item.strip()
+            ]
+        )
+        status["proxy_configured"] = bool(os.environ.get("PROXY_LIST", "").strip() or os.environ.get("YOUTUBE_PROXY", "").strip())
         status["invidious_instances"] = len(__import__("youtube_resolver").discover_invidious_instances())
         status["piped_instances"] = len(__import__("youtube_resolver").discover_piped_instances())
         return status
@@ -2538,6 +2548,82 @@ def direct_instagram_download_from_cache(url, quality):
     }
 
 
+def direct_youtube_download_from_cache(url, quality):
+    """Use freshly probed YouTube formats before asking YouTube to extract again."""
+    info = cached_media_info(url)
+    if not info or info.get("_ytdlp_only"):
+        return None
+    has_ffmpeg = shutil.which("ffmpeg") is not None
+    video_format, audio_format = pick_instagram_direct_formats(info, quality, has_ffmpeg)
+    if not video_format:
+        return None
+    if not format_has_audio(video_format) and not audio_format:
+        return None
+
+    headers = media_download_headers(info, url, video_format)
+    title = secure_filename((info.get("title") or "youtube_video")[:80]) or "youtube_video"
+    file_id = make_id()
+    path = DOWNLOAD_DIR / f"{file_id}_{title}.mp4"
+    temp_paths = []
+
+    try:
+        if audio_format:
+            video_ext = (video_format.get("ext") or "mp4").split("-", 1)[0]
+            if video_ext not in {"mp4", "mov", "webm", "m4v"}:
+                video_ext = "mp4"
+            audio_ext = (audio_format.get("ext") or "m4a").split("-", 1)[0]
+            if audio_ext not in {"m4a", "mp4", "aac", "mp3", "webm"}:
+                audio_ext = "m4a"
+            video_temp = DOWNLOAD_DIR / f"{file_id}_video.{video_ext}"
+            audio_temp = DOWNLOAD_DIR / f"{file_id}_audio.{audio_ext}"
+            temp_paths.extend([video_temp, audio_temp])
+            audio_headers = media_download_headers(info, url, audio_format)
+            if not download_media_stream(video_format.get("url"), headers, video_temp):
+                return None
+            if not download_media_stream(audio_format.get("url"), audio_headers, audio_temp):
+                return None
+            if not ffmpeg_merge_video_audio(video_temp, audio_temp, path):
+                return None
+        else:
+            if not download_media_stream(video_format.get("url"), headers, path):
+                return None
+    except Exception:
+        delete_quietly(path)
+        return None
+    finally:
+        for temp_path in temp_paths:
+            delete_quietly(temp_path)
+
+    if not path.exists() or path.stat().st_size < 1024:
+        delete_quietly(path)
+        return None
+    if not file_has_audio_stream(path):
+        delete_quietly(path)
+        return None
+
+    selected = video_format
+    height = selected.get("height") or info.get("height")
+    note = "Downloaded from the fresh preview session to avoid another YouTube extraction."
+    if audio_format:
+        note = "Downloaded from the fresh preview session with HD video and audio merged."
+    if requested_video_height(quality) and height and int(format_number(height)) != requested_video_height(quality):
+        note = f"Downloaded {int(format_number(height))}p from the preview session because YouTube did not expose the requested quality."
+    return {
+        "success": True,
+        "title": info.get("title") or "YouTube video",
+        "filename": path.name,
+        "file_size": path.stat().st_size,
+        "download_url": public_download_url(path.name),
+        "download_label": "Download video",
+        "note": note,
+        "video_width": selected.get("width") or info.get("width"),
+        "video_height": height,
+        "video_fps": selected.get("fps") or info.get("fps"),
+        "video_codec": selected.get("vcodec") or info.get("vcodec"),
+        "format_id": selected.get("format_id") or info.get("format_id"),
+    }
+
+
 def download_youtube_via_resolver(url, quality):
     """Download via Invidious/Piped/Cobalt after yt-dlp has already been blocked."""
     info = None
@@ -2554,6 +2640,8 @@ def download_youtube_via_resolver(url, quality):
     has_ffmpeg = shutil.which("ffmpeg") is not None
     video_fmt, audio_fmt = pick_instagram_direct_formats(info, quality, has_ffmpeg)
     if not video_fmt:
+        raise ApiError(YOUTUBE_BLOCK_HELP, 503)
+    if not format_has_audio(video_fmt) and not audio_fmt:
         raise ApiError(YOUTUBE_BLOCK_HELP, 503)
 
     file_id = make_id()
@@ -2637,6 +2725,11 @@ def run_yt_dlp(url, mode, quality="1080", skip_resolver_fallback=False):
     quality_note = ""
     
     import random
+
+    if youtube_url and mode != "audio":
+        cached = direct_youtube_download_from_cache(url, quality)
+        if cached:
+            return cached
     
     for attempt_idx, (cookie_source, client) in enumerate(attempts):
         try:
