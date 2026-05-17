@@ -37,6 +37,7 @@ WORKDIR /app/backend
 EXPOSE 5000
 
 ENV BGUTIL_POT_BASE_URL=http://127.0.0.1:4416 \
+    YOUTUBE_FORCE_COOKIELESS=1 \
     YOUTUBE_USE_COOKIES=0
 
 RUN chmod +x /app/start.sh

@@ -111,10 +111,9 @@ _preview_file_cache = {}
 FONT_DIR = Path(os.environ.get("WINDIR", "C:\\Windows")) / "Fonts"
 RUNTIME_COOKIES_DIR = Path(os.environ.get("TMPDIR", BASE_DIR)) / "youtube_cookies"
 RUNTIME_COOKIES_DIR.mkdir(parents=True, exist_ok=True)
-YOUTUBE_COOKIES_HELP = "YouTube is blocking this server. Add fresh YouTube cookies, or add multiple rotated profiles as YOUTUBE_COOKIES_TEXT_1, YOUTUBE_COOKIES_TEXT_2, and YOUTUBE_COOKIES_TEXT_3 in Railway Variables, then redeploy."
+YOUTUBE_COOKIES_HELP = "YouTube blocked this server. No-cookie mode is enabled; deploy the included Cobalt relay and set COBALT_API_URL, then redeploy."
 YOUTUBE_BLOCK_HELP = (
-    "YouTube blocked a direct request from this server. Retrying through alternate APIs (no login cookies). "
-    "If it still fails, redeploy on a new Railway region or set COBALT_API_URL for a self-hosted Cobalt instance."
+    "YouTube blocked this server in no-cookie mode. Try again, redeploy in a new region, or set COBALT_API_URL to your self-hosted Cobalt relay."
 )
 INSTAGRAM_COOKIES_HELP = "Instagram is asking this server to log in. Add fresh Instagram cookies as INSTAGRAM_COOKIES_TEXT_1, INSTAGRAM_COOKIES_TEXT_2, and INSTAGRAM_COOKIES_TEXT_3 in Railway Variables, then redeploy."
 SEO_PAGES = [
@@ -526,7 +525,7 @@ def simplify_download_error(message):
     if "copyright" in lowered or "unavailable" in lowered:
         return "This media is unavailable from the source site."
     if "requested format is not available" in lowered:
-        return "YouTube did not expose downloadable formats to this server. Try Best available, or add YOUTUBE_COOKIES_TEXT in Railway Variables."
+        return "YouTube did not expose downloadable formats to this server. Try Best available or configure COBALT_API_URL for no-cookie relay fallback."
     if "rate-limit" in lowered or "login required" in lowered or "rate limit" in lowered:
         return "Instagram is busy. Wait 1–2 minutes and try Best quality — download will retry automatically."
     if "no downloadable video" in lowered or ("instagram" in lowered and "empty media" in lowered):
@@ -636,6 +635,8 @@ def platform_cookie_sources(prefix, domains, allow_no_cookies=True):
 
 
 def youtube_use_cookies():
+    if os.environ.get("YOUTUBE_FORCE_COOKIELESS", "1").strip().lower() not in {"0", "false", "no"}:
+        return False
     return os.environ.get("YOUTUBE_USE_COOKIES", "0").strip().lower() in {"1", "true", "yes"}
 
 
@@ -765,6 +766,7 @@ def youtube_cookie_status():
     if not youtube_use_cookies():
         status = platform_cookie_status("YOUTUBE", [])
         status["cookieless_mode"] = True
+        status["force_cookieless"] = True
         status["cookies_ready"] = True
         status["cookie_profile_count"] = 0
         status["cookie_profiles"] = ["NO_COOKIES"]
@@ -774,6 +776,7 @@ def youtube_cookie_status():
             or os.environ.get("BGUTIL_BASE_URL", "http://127.0.0.1:4416").strip()
         )
         status["resolver_fallbacks"] = ["yt-dlp+bgutil", "invidious-parallel", "piped-parallel", "cobalt", "oembed"]
+        status["cobalt_configured"] = bool(os.environ.get("COBALT_API_URL", "").strip() or os.environ.get("COBALT_API_URLS", "").strip())
         status["invidious_instances"] = len(__import__("youtube_resolver").discover_invidious_instances())
         status["piped_instances"] = len(__import__("youtube_resolver").discover_piped_instances())
         return status
@@ -2527,21 +2530,22 @@ def direct_instagram_download_from_cache(url, quality):
 
 
 def download_youtube_via_resolver(url, quality):
-    """Download via Invidious/Piped/Cobalt; if APIs fail, force yt-dlp + PO token again."""
+    """Download via Invidious/Piped/Cobalt after yt-dlp has already been blocked."""
     info = None
     try:
-        info = fetch_youtube_info(url, require_formats=True)
-    except Exception:
+        info = fetch_youtube_info(url, require_formats=True, quality=quality)
+    except Exception as error:
+        app.logger.warning("YouTube resolver fallback failed: %s", str(error)[:220])
         info = None
 
     if not info or not info.get("formats"):
-        return run_yt_dlp(url, "video", quality, skip_resolver_fallback=True)
+        raise ApiError(YOUTUBE_BLOCK_HELP, 503)
 
     cache_media_info(url, info)
     has_ffmpeg = shutil.which("ffmpeg") is not None
     video_fmt, audio_fmt = pick_instagram_direct_formats(info, quality, has_ffmpeg)
     if not video_fmt:
-        return run_yt_dlp(url, "video", quality, skip_resolver_fallback=True)
+        raise ApiError(YOUTUBE_BLOCK_HELP, 503)
 
     file_id = make_id()
     title = secure_filename((info.get("title") or "youtube_video")[:80]) or "youtube_video"
@@ -2577,9 +2581,10 @@ def download_youtube_via_resolver(url, quality):
                 path,
             ):
                 raise ApiError("Could not download video stream.", 400)
-    except Exception:
+    except Exception as error:
+        app.logger.warning("YouTube resolver stream download failed: %s", str(error)[:220])
         delete_quietly(path)
-        return run_yt_dlp(url, "video", quality, skip_resolver_fallback=True)
+        raise ApiError("No-cookie relay returned a stream, but this server could not fetch it. Try again or set COBALT_API_URL to your self-hosted relay.", 503) from error
     finally:
         for temp_path in temp_paths:
             delete_quietly(temp_path)

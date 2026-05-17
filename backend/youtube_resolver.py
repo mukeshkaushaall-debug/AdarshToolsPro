@@ -352,40 +352,80 @@ def fetch_oembed(url):
   return None
 
 
-def fetch_cobalt(url):
-  # Add random delay
-  time.sleep(random.uniform(0.2, 0.6))
-  
-  # Try multiple Cobalt instances if configured
-  cobalt_bases = []
-  base = os.environ.get("COBALT_API_URL", "").strip().rstrip("/")
-  if base:
-    cobalt_bases.append(base)
-  
-  # Add additional Cobalt instances from env
+def cobalt_quality(quality):
+  value = str(quality or "1080").lower()
+  if value == "best":
+    return "max"
+  match = re.search(r"\d+", value)
+  if not match:
+    return "1080"
+  return str(max(144, min(4320, int(match.group(0)))))
+
+
+def cobalt_bases():
+  bases = []
+  primary = os.environ.get("COBALT_API_URL", "").strip().rstrip("/")
+  if primary:
+    bases.append(primary)
   additional = os.environ.get("COBALT_API_URLS", "").strip()
   if additional:
-    cobalt_bases.extend([b.strip().rstrip("/") for b in additional.split(",") if b.strip()])
-  
-  # Default Cobalt instances
-  if not cobalt_bases:
-    cobalt_bases = [
-      "https://cobalt-api.kwiatekmiki.pl",
-      "https://cobalt-api.owo.si",
-      "https://cobalt-api.hope.so",
-    ]
-  
+    bases.extend([base.strip().rstrip("/") for base in additional.split(",") if base.strip()])
+  return list(dict.fromkeys(bases))
+
+
+def cobalt_auth_header():
+  explicit = os.environ.get("COBALT_AUTHORIZATION", "").strip()
+  if explicit:
+    return explicit
+  api_key = os.environ.get("COBALT_API_KEY", "").strip()
+  if api_key:
+    return f"Api-Key {api_key}"
+  return ""
+
+
+def cobalt_endpoints(base):
+  base = base.rstrip("/")
+  if base.endswith("/api/json"):
+    return [base]
+  return [base, f"{base}/api/json"]
+
+
+def cobalt_url_from_response(data):
+  status = data.get("status")
+  if status in {"redirect", "tunnel"} and data.get("url"):
+    return data["url"]
+  if status == "picker":
+    for item in data.get("picker") or []:
+      if item.get("type") == "video" and item.get("url"):
+        return item["url"]
+  if status == "local-processing":
+    tunnels = data.get("tunnel") or []
+    if len(tunnels) == 1:
+      item = tunnels[0]
+      if isinstance(item, dict):
+        return item.get("url") or ""
+      return item
+  return ""
+
+
+def fetch_cobalt(url, quality="1080"):
+  # Add random delay
+  time.sleep(random.uniform(0.2, 0.6))
+
+  bases = cobalt_bases()
+  if not bases:
+    return None
+
   # Shuffle for randomization
-  random.shuffle(cobalt_bases)
-  
-  for base in cobalt_bases[:5]:  # Try up to 5 instances
-    endpoint = base if base.endswith("/api/json") else f"{base}/api/json"
+  random.shuffle(bases)
+
+  for base in bases[:5]:  # Try up to 5 configured instances
     headers = get_random_headers()
     headers["Accept"] = "application/json"
     headers["Content-Type"] = "application/json"
-    api_key = os.environ.get("COBALT_API_KEY", "").strip()
-    if api_key:
-      headers["Authorization"] = f"Api-Key {api_key}"
+    authorization = cobalt_auth_header()
+    if authorization:
+      headers["Authorization"] = authorization
     
     proxies = {}
     random_proxy = get_random_proxy()
@@ -396,35 +436,46 @@ def fetch_cobalt(url):
       if proxy:
         proxies = {"http": proxy, "https": proxy}
     
-    payload = {"url": url, "downloadMode": "auto", "videoQuality": "1080"}
-    data = None
-    for verify in (certifi.where(), False):
-      try:
-        response = requests.post(
-          endpoint,
-          json=payload,
-          headers=headers,
-          timeout=90,
-          verify=verify,
-          proxies=proxies or None,
-        )
-        response.raise_for_status()
-        data = response.json()
-        break
-      except requests.exceptions.SSLError:
-        if verify is False:
+    payload = {
+      "url": url,
+      "downloadMode": "auto",
+      "filenameStyle": "basic",
+      "videoQuality": cobalt_quality(quality),
+      "youtubeVideoCodec": "h264",
+      "youtubeVideoContainer": "mp4",
+      "localProcessing": "disabled",
+    }
+    for endpoint in cobalt_endpoints(base):
+      data = None
+      for verify in (certifi.where(), False):
+        try:
+          response = requests.post(
+            endpoint,
+            json=payload,
+            headers=headers,
+            timeout=90,
+            verify=verify,
+            proxies=proxies or None,
+          )
+          response.raise_for_status()
+          data = response.json()
+          break
+        except requests.exceptions.SSLError:
+          if verify is False:
+            continue
           continue
-        continue
-      except Exception:
-        continue
-    
-    if data:
-      if data.get("status") == "redirect" and data.get("url"):
-        return {"_resolver": "cobalt", "title": "YouTube video", "muxed_url": data["url"], "height": 1080}
-      if data.get("status") == "picker":
-        for item in data.get("picker") or []:
-          if item.get("type") == "video" and item.get("url"):
-            return {"_resolver": "cobalt", "title": "YouTube video", "muxed_url": item["url"], "height": 1080}
+        except Exception:
+          continue
+
+      if data:
+        media_url = cobalt_url_from_response(data)
+        if media_url:
+          return {
+            "_resolver": "cobalt",
+            "title": "YouTube video",
+            "muxed_url": media_url,
+            "height": 1080 if cobalt_quality(quality) == "max" else int(cobalt_quality(quality)),
+          }
   
   return None
 
@@ -583,7 +634,7 @@ def resolver_payload_to_info(payload, url, video_id):
   }
 
 
-def fetch_youtube_info(url, require_formats=False):
+def fetch_youtube_info(url, require_formats=False, quality="1080"):
   """Try many APIs in parallel; oEmbed thumbnail/title always available as last resort."""
   video_id = extract_video_id(url)
   if not video_id:
@@ -594,7 +645,7 @@ def fetch_youtube_info(url, require_formats=False):
     futures = [
       pool.submit(fetch_invidious, video_id),
       pool.submit(fetch_piped, video_id),
-      pool.submit(fetch_cobalt, url),
+      pool.submit(fetch_cobalt, url, quality),
     ]
     try:
       for future in as_completed(futures, timeout=65):
@@ -618,6 +669,6 @@ def fetch_youtube_info(url, require_formats=False):
 
   if require_formats:
     raise ValueError(
-      "External APIs are busy. Server will retry with built-in yt-dlp + PO token. Try again in 30 seconds."
+      "No-cookie YouTube resolvers are busy. Try again, redeploy in a new region, or set COBALT_API_URL to your self-hosted Cobalt relay."
     )
   return minimal_youtube_info(url, video_id)

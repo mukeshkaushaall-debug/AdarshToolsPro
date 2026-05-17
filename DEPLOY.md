@@ -28,12 +28,13 @@ The Docker image uses Python 3.11 for better compatibility with `rembg` and `onn
 
 ## YouTube Reliability Variables
 
-YouTube runs in cookieless mode by default. The backend first tries yt-dlp with PO-token support, then parallel Invidious/Piped/Cobalt resolver fallbacks. If you want a self-hosted relay backup, deploy Cobalt and add:
+YouTube runs in forced cookieless mode by default. The backend first tries yt-dlp with PO-token support, then parallel Invidious/Piped resolver fallbacks, and finally a configured Cobalt relay. Public Cobalt APIs are not assumed; use your own relay from `cobalt-relay/`.
 
-- `COBALT_API_URL=https://your-cobalt-server.example`
-- `COBALT_API_URLS=https://backup-1.example,https://backup-2.example`
+- `YOUTUBE_FORCE_COOKIELESS=1`
+- `COBALT_API_URL=https://your-cobalt-relay.example/`
+- `COBALT_API_URLS=https://backup-1.example/,https://backup-2.example/`
 
-Cookies are optional and disabled unless you set `YOUTUBE_USE_COOKIES=1`. If you choose to use cookies for content you are allowed to access, add multiple fresh cookie profiles in Railway **Variables** so the backend can retry automatically:
+Cookies are ignored unless you explicitly set `YOUTUBE_FORCE_COOKIELESS=0` and `YOUTUBE_USE_COOKIES=1`. If you choose to use cookies for content you are allowed to access, add multiple fresh cookie profiles in Railway **Variables** so the backend can retry automatically:
 
 - `YOUTUBE_COOKIES_TEXT_1`
 - `YOUTUBE_COOKIES_TEXT_2`

@@ -97,12 +97,13 @@ YOUTUBE_PROXY=http://your-proxy.com:8080
 - Increased cache limit from 30 to 50 instances
 
 ### 6. Enhanced Cobalt API
-- Multiple Cobalt instances with fallback
-- Default instances: cobalt-api.kwiatekmiki.pl, cobalt-api.owo.si, cobalt-api.hope.so
-- Configure custom instances:
+- Multiple self-hosted Cobalt relay instances with fallback
+- No public Cobalt API is assumed by default; deploy your own relay from `cobalt-relay/`
+- Configure relay instances:
   ```
-  COBALT_API_URL=https://your-cobalt-instance.com
-  COBALT_API_URLS=https://instance1.com,https://instance2.com,https://instance3.com
+  YOUTUBE_FORCE_COOKIELESS=1
+  COBALT_API_URL=https://your-cobalt-relay.example/
+  COBALT_API_URLS=https://relay1.example/,https://relay2.example/
   ```
 - Random instance selection
 - Proxy support
@@ -140,9 +141,10 @@ PROXY_LIST=http://proxy1.com:8080,http://proxy2.com:8080,socks5://proxy3.com:108
 # Single Proxy Alternative
 YOUTUBE_PROXY=http://your-proxy.com:8080
 
-# Custom Cobalt Instances (Optional)
-COBALT_API_URL=https://your-cobalt-instance.com
-COBALT_API_URLS=https://instance1.com,https://instance2.com
+# Self-hosted Cobalt relay instances (Optional)
+YOUTUBE_FORCE_COOKIELESS=1
+COBALT_API_URL=https://your-cobalt-relay.example/
+COBALT_API_URLS=https://relay1.example/,https://relay2.example/
 
 # Additional Invidious/Piped Instances (Optional)
 INVIDIOUS_API_URLS=https://custom-invidious1.com,https://custom-invidious2.com
