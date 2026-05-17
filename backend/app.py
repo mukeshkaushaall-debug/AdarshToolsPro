@@ -2564,6 +2564,9 @@ def download_youtube_via_resolver(url, quality):
                 path,
             ):
                 raise ApiError("Could not download video stream.", 400)
+    except Exception:
+        delete_quietly(path)
+        return run_yt_dlp(url, "video", quality, skip_resolver_fallback=True)
     finally:
         for temp_path in temp_paths:
             delete_quietly(temp_path)

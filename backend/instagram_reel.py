@@ -363,52 +363,70 @@ def scrape_instagram_candidates(url):
 
 
 def fetch_via_cobalt(url, api_base=None):
-    base = (api_base or os.environ.get("COBALT_API_URL", "")).strip().rstrip("/")
-    if not base:
+    bases = []
+    primary = (api_base or os.environ.get("COBALT_API_URL", "")).strip().rstrip("/")
+    if primary:
+        bases.append(primary)
+    bases.extend(
+        base.strip().rstrip("/")
+        for base in os.environ.get("COBALT_API_URLS", "").split(",")
+        if base.strip()
+    )
+    bases = list(dict.fromkeys(bases))
+    if not bases:
         raise ValueError("Cobalt API URL is not configured")
 
-    endpoint = base if base.endswith("/api/json") else f"{base}/api/json"
-    payload = {"url": url, "downloadMode": "auto", "videoQuality": "1080"}
-    headers = {"Accept": "application/json", "Content-Type": "application/json"}
-    api_key = os.environ.get("COBALT_API_KEY", "").strip()
-    if api_key:
-        headers["Authorization"] = f"Api-Key {api_key}"
+    errors = []
+    for base in bases:
+        endpoint = base if base.endswith("/api/json") else f"{base}/api/json"
+        payload = {"url": url, "downloadMode": "auto", "videoQuality": "1080"}
+        headers = {"Accept": "application/json", "Content-Type": "application/json"}
+        api_key = os.environ.get("COBALT_API_KEY", "").strip()
+        if api_key:
+            headers["Authorization"] = f"Api-Key {api_key}"
 
-    try:
-        response = requests.post(
-            endpoint, json=payload, headers=headers, timeout=90, verify=certifi.where()
-        )
-    except requests.exceptions.SSLError:
-        response = requests.post(
-            endpoint, json=payload, headers=headers, timeout=90, verify=False
-        )
-    response.raise_for_status()
-    data = response.json()
+        try:
+            response = requests.post(
+                endpoint, json=payload, headers=headers, timeout=90, verify=certifi.where()
+            )
+        except requests.exceptions.SSLError:
+            response = requests.post(
+                endpoint, json=payload, headers=headers, timeout=90, verify=False
+            )
+        except Exception as error:
+            errors.append(str(error)[:120])
+            continue
+        try:
+            response.raise_for_status()
+            data = response.json()
+        except Exception as error:
+            errors.append(str(error)[:120])
+            continue
 
-    if data.get("status") == "redirect" and data.get("url"):
-        return {
-            "candidates": [{"url": data["url"], "height": 1080}],
-            "title": "instagram_reel",
-            "webpage_url": normalize_url(url) or url,
-        }
-
-    if data.get("status") == "picker":
-        videos = [
-            item
-            for item in data.get("picker") or []
-            if item.get("type") == "video" and item.get("url")
-        ]
-        if videos:
+        if data.get("status") == "redirect" and data.get("url"):
             return {
-                "candidates": [{"url": videos[0]["url"], "height": 1080}],
+                "candidates": [{"url": data["url"], "height": 1080}],
                 "title": "instagram_reel",
                 "webpage_url": normalize_url(url) or url,
             }
 
-    error = data.get("error") or {}
-    if isinstance(error, dict):
-        raise ValueError(error.get("code") or "Cobalt could not process this URL")
-    raise ValueError("Cobalt could not process this URL")
+        if data.get("status") == "picker":
+            videos = [
+                item
+                for item in data.get("picker") or []
+                if item.get("type") == "video" and item.get("url")
+            ]
+            if videos:
+                return {
+                    "candidates": [{"url": videos[0]["url"], "height": 1080}],
+                    "title": "instagram_reel",
+                    "webpage_url": normalize_url(url) or url,
+                }
+
+        error = data.get("error") or {}
+        if isinstance(error, dict):
+            errors.append(error.get("code") or "Cobalt could not process this URL")
+    raise ValueError(errors[-1] if errors else "Cobalt could not process this URL")
 
 
 def resolve_instagram_media(url):
@@ -423,6 +441,11 @@ def resolve_instagram_media(url):
     if cobalt:
         try:
             return fetch_via_cobalt(url, cobalt)
+        except Exception as error:
+            errors.append(str(error))
+    elif os.environ.get("COBALT_API_URLS", "").strip():
+        try:
+            return fetch_via_cobalt(url)
         except Exception as error:
             errors.append(str(error))
 

@@ -244,6 +244,9 @@ function renderCards() {
 }
 
 async function postJSON(url, body, timeoutMs = 90000) {
+  if (url.includes("/api/download/") || url.includes("/api/convert/audio")) {
+    timeoutMs = Math.max(timeoutMs, 300000);
+  }
   const res = await fetchWithTimeout(
     API_BASE + url,
     {

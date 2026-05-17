@@ -213,30 +213,45 @@ def resolve_scrape(url, quality="best"):
 
 
 def resolve_cobalt(url):
-    base = os.environ.get("COBALT_API_URL", "").strip().rstrip("/")
-    if not base:
-        raise ValueError("Cobalt not configured")
-    endpoint = base if base.endswith("/api/json") else f"{base}/api/json"
-    headers = {"Accept": "application/json", "Content-Type": "application/json"}
-    api_key = os.environ.get("COBALT_API_KEY", "").strip()
-    if api_key:
-        headers["Authorization"] = f"Api-Key {api_key}"
-    session = http_session()
-    response = request_post(
-        session,
-        endpoint,
-        json={"url": normalize_url(url), "downloadMode": "auto", "videoQuality": "1080"},
-        headers=headers,
+    bases = []
+    primary = os.environ.get("COBALT_API_URL", "").strip().rstrip("/")
+    if primary:
+        bases.append(primary)
+    bases.extend(
+        base.strip().rstrip("/")
+        for base in os.environ.get("COBALT_API_URLS", "").split(",")
+        if base.strip()
     )
-    response.raise_for_status()
-    data = response.json()
-    if data.get("status") == "redirect" and data.get("url"):
-        return {"url": data["url"], "title": "instagram_reel"}
-    if data.get("status") == "picker":
-        for item in data.get("picker") or []:
-            if item.get("type") == "video" and item.get("url"):
-                return {"url": item["url"], "title": "instagram_reel"}
-    raise ValueError("Cobalt could not process URL")
+    bases = list(dict.fromkeys(bases))
+    if not bases:
+        raise ValueError("Cobalt not configured")
+    errors = []
+    for base in bases:
+        endpoint = base if base.endswith("/api/json") else f"{base}/api/json"
+        headers = {"Accept": "application/json", "Content-Type": "application/json"}
+        api_key = os.environ.get("COBALT_API_KEY", "").strip()
+        if api_key:
+            headers["Authorization"] = f"Api-Key {api_key}"
+        session = http_session()
+        try:
+            response = request_post(
+                session,
+                endpoint,
+                json={"url": normalize_url(url), "downloadMode": "auto", "videoQuality": "1080"},
+                headers=headers,
+            )
+            response.raise_for_status()
+            data = response.json()
+        except Exception as error:
+            errors.append(str(error)[:120])
+            continue
+        if data.get("status") == "redirect" and data.get("url"):
+            return {"url": data["url"], "title": "instagram_reel"}
+        if data.get("status") == "picker":
+            for item in data.get("picker") or []:
+                if item.get("type") == "video" and item.get("url"):
+                    return {"url": item["url"], "title": "instagram_reel"}
+    raise ValueError(errors[-1] if errors else "Cobalt could not process URL")
 
 
 def is_rate_or_login_error(message):
@@ -486,30 +501,32 @@ def download_instagram(url, quality, download_dir, make_id, secure_filename, pub
             if cookie_file is None or not is_rate_or_login_error(str(error)):
                 pass
 
-    cookie_header = cookie_header_from_file(cookie_files[0]) if cookie_files else ""
-    try:
-        file_path, title = try_direct_api(
-            shortcode,
-            cookie_header,
-            referer,
-            download_dir,
-            prefix,
-            secure_filename,
-            url=clean,
-            quality=quality,
-        )
-        return {
-            "success": True,
-            "title": title,
-            "filename": file_path.name,
-            "file_size": file_path.stat().st_size,
-            "download_url": public_download_url(file_path.name),
-            "download_label": "Download video",
-            "note": "Downloaded via Instagram media API (works when server is rate-limited).",
-            "video_height": None,
-        }
-    except Exception as error:
-        errors.append(str(error)[:180])
+    cookie_headers = [cookie_header_from_file(path) for path in cookie_files]
+    cookie_headers.append("")
+    for cookie_header in list(dict.fromkeys(cookie_headers)):
+        try:
+            file_path, title = try_direct_api(
+                shortcode,
+                cookie_header,
+                referer,
+                download_dir,
+                prefix,
+                secure_filename,
+                url=clean,
+                quality=quality,
+            )
+            return {
+                "success": True,
+                "title": title,
+                "filename": file_path.name,
+                "file_size": file_path.stat().st_size,
+                "download_url": public_download_url(file_path.name),
+                "download_label": "Download video",
+                "note": "Downloaded via Instagram media API.",
+                "video_height": None,
+            }
+        except Exception as error:
+            errors.append(str(error)[:180])
 
     try:
         resolved = resolve_instagram_media(clean)
@@ -533,7 +550,7 @@ def download_instagram(url, quality, download_dir, make_id, secure_filename, pub
     except Exception as error:
         errors.append(str(error)[:180])
 
-    if os.environ.get("COBALT_API_URL", "").strip():
+    if os.environ.get("COBALT_API_URL", "").strip() or os.environ.get("COBALT_API_URLS", "").strip():
         try:
             meta = resolve_cobalt(clean)
             title = secure_filename((meta.get("title") or "instagram_reel")[:80]) or "instagram_reel"

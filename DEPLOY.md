@@ -28,7 +28,12 @@ The Docker image uses Python 3.11 for better compatibility with `rembg` and `onn
 
 ## YouTube Reliability Variables
 
-YouTube may block a server IP or expire a single cookie export quickly. For the YouTube downloader, add multiple fresh cookie profiles in Railway **Variables** so the backend can retry automatically:
+YouTube runs in cookieless mode by default. The backend first tries yt-dlp with PO-token support, then parallel Invidious/Piped/Cobalt resolver fallbacks. If you want a self-hosted relay backup, deploy Cobalt and add:
+
+- `COBALT_API_URL=https://your-cobalt-server.example`
+- `COBALT_API_URLS=https://backup-1.example,https://backup-2.example`
+
+Cookies are optional and disabled unless you set `YOUTUBE_USE_COOKIES=1`. If you choose to use cookies for content you are allowed to access, add multiple fresh cookie profiles in Railway **Variables** so the backend can retry automatically:
 
 - `YOUTUBE_COOKIES_TEXT_1`
 - `YOUTUBE_COOKIES_TEXT_2`
@@ -45,7 +50,9 @@ After adding or refreshing variables, redeploy and open `/api/youtube/status`. C
 
 ## Instagram Reliability Variables
 
-Instagram frequently allows preview metadata but asks the server to log in during the download request. The backend now reuses the short-lived preview media URL when possible and can rotate multiple Instagram cookie profiles:
+Instagram first tries cookieless public methods: yt-dlp public extraction, GraphQL, magic params, public page scraping, preview URL reuse, and optional Cobalt relay backups. For self-hosted relay fallback, use the same `COBALT_API_URL` / `COBALT_API_URLS` variables above.
+
+Cookies remain optional. If you choose to use them for content you are allowed to access, the backend can rotate multiple Instagram cookie profiles:
 
 - `INSTAGRAM_COOKIES_TEXT_1`
 - `INSTAGRAM_COOKIES_TEXT_2`

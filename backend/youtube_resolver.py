@@ -139,7 +139,7 @@ _instance_cache = {"time": 0, "invidious": [], "piped": []}
 INSTANCE_CACHE_TTL = 3600
 
 # Circuit breaker - track failed instances
-_failed_instances = {"invidious": set(), "piped": set()}
+_failed_instances = {"invidious": {}, "piped": {}}
 _failed_instance_ttl = 300  # 5 minutes cooldown for failed instances
 
 # Proxy rotation support
@@ -155,13 +155,17 @@ def get_random_proxy():
 
 def mark_instance_failed(instance_type, instance_url):
     """Mark an instance as failed temporarily."""
-    _failed_instances[instance_type].add(instance_url)
-    # Clear old failures after TTL
-    time.sleep(0)  # Placeholder for cleanup logic
+    _failed_instances[instance_type][instance_url] = time.time()
 
 def is_instance_failed(instance_type, instance_url):
     """Check if an instance is marked as failed."""
-    return instance_url in _failed_instances[instance_type]
+    failed_at = _failed_instances[instance_type].get(instance_url)
+    if not failed_at:
+        return False
+    if time.time() - failed_at > _failed_instance_ttl:
+        _failed_instances[instance_type].pop(instance_url, None)
+        return False
+    return True
 
 
 def _request_json(url, method="GET", json_body=None, timeout=22):
@@ -587,22 +591,27 @@ def fetch_youtube_info(url, require_formats=False):
 
   best_partial = None
   with ThreadPoolExecutor(max_workers=3) as pool:
-    inv_future = pool.submit(fetch_invidious, video_id)
-    pip_future = pool.submit(fetch_piped, video_id)
-    cob_future = pool.submit(fetch_cobalt, url)
-    for future in (inv_future, pip_future, cob_future):
-      try:
-        payload = future.result(timeout=50)
-        if payload:
-          info = resolver_payload_to_info(payload, url, video_id)
-          if info.get("formats"):
-            return info
-          if not require_formats:
-            return info
-          if not best_partial:
-            best_partial = info
-      except Exception:
-        continue
+    futures = [
+      pool.submit(fetch_invidious, video_id),
+      pool.submit(fetch_piped, video_id),
+      pool.submit(fetch_cobalt, url),
+    ]
+    try:
+      for future in as_completed(futures, timeout=65):
+        try:
+          payload = future.result()
+          if payload:
+            info = resolver_payload_to_info(payload, url, video_id)
+            if info.get("formats"):
+              return info
+            if not require_formats:
+              return info
+            if not best_partial:
+              best_partial = info
+        except Exception:
+          continue
+    except Exception:
+      pass
 
   if best_partial:
     return best_partial
