@@ -1,0 +1,41 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>AI Status Maker - Add Your Photo to Status Images & Videos</title>
+  <meta name="description" content="Upload a status image or video and your original photo. ThugTools places your photo automatically in the best-looking position.">
+  <meta name="robots" content="index, follow, max-image-preview:large">
+  <link rel="canonical" href="https://www.thugtools.xyz/ai-status-maker">
+  <meta property="og:type" content="website">
+  <meta property="og:site_name" content="ThugTools">
+  <meta property="og:title" content="AI Status Maker - Add Your Photo to Status Images & Videos">
+  <meta property="og:description" content="Create share-ready statuses by placing your photo into images or videos automatically.">
+  <meta property="og:url" content="https://www.thugtools.xyz/ai-status-maker">
+  <meta property="og:image" content="/favicon.svg">
+  <meta name="twitter:card" content="summary_large_image">
+  <meta name="twitter:title" content="AI Status Maker">
+  <meta name="twitter:description" content="Add your photo to image and video statuses with smart placement.">
+  <meta name="twitter:image" content="/favicon.svg">
+  <meta name="theme-color" content="#ec4899">
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@500;650;750;850;900&display=swap" rel="stylesheet"><link rel="stylesheet" href="../style.css">
+</head>
+<body>
+  <div class="rgb-line"></div><nav class="nav"><div class="container nav-inner"><a class="brand" href="../index.html"><div class="brand-mark">T</div><span>ThugTools</span></a><div class="nav-links"><a href="../index.html#tools">Tools</a><a class="active" href="#">Status Maker</a></div><div class="nav-actions"><button class="icon-btn" data-theme aria-label="Toggle theme"><span data-icon="sun"></span></button><button class="menu-btn" aria-label="Open menu"><span data-icon="menu"></span></button></div></div></nav>
+  <main class="tool-shell"><div class="container tool-panel reveal">
+    <section class="tool-intro"><span class="eyebrow">Smart status editor</span><h1>AI Status Maker</h1><p class="lead">Upload a status photo or video, then upload your original photo. The tool creates a clean cutout and places it where it fits best.</p></section>
+    <form class="form-stack" data-status-form data-endpoint="/api/status/maker">
+      <label class="upload-zone" data-background-zone><input type="file" name="background" accept="image/*,video/*" required><div><div data-icon="upload"></div><h3>Status photo or video</h3><p data-background-name>or tap to browse</p></div></label>
+      <label class="upload-zone" data-portrait-zone><input type="file" name="portrait" accept="image/*" required><div><div data-icon="upload"></div><h3>Your original photo</h3><p data-portrait-name>or tap to browse</p></div></label>
+      <div class="control-grid">
+        <label><span>Style</span><select name="style"><option value="smart">Smart cinematic</option><option value="clean">Clean cutout</option><option value="circle">Circle frame</option></select></label>
+        <label><span>Placement</span><select name="placement"><option value="auto">Auto best place</option><option value="left">Left side</option><option value="right">Right side</option><option value="center">Center</option></select></label>
+        <label><span>Size</span><input type="range" name="scale" min="28" max="58" value="42"></label>
+        <label><span>Shadow</span><input type="range" name="shadow" min="0" max="100" value="58"></label>
+      </div>
+      <button class="btn" type="submit">Create status</button><div class="progress-wrap"><div class="progress-bar"></div></div><div class="preview-grid"><div class="preview-card"><span>Background</span><div data-before></div></div><div class="preview-card"><span>Result</span><div data-after></div></div></div><div class="result-box" data-result></div>
+    </form>
+    <section class="tool-seo-copy"><h2>Create photo and video statuses online</h2><p>Use your own media and portrait to generate a share-ready image or MP4 status with automatic placement.</p><h3>Note</h3><p>Video export requires FFmpeg on the server. Image status export works with the built-in photo engine.</p></section>
+  </div></main>
+  <footer class="footer"><div class="container footer-inner"><span>ThugTools</span><span>Make statuses from media you own.</span></div></footer><div class="toast"></div><div class="spinner"><div class="loader"></div></div><script src="../script.js?v=20260518-passport-status"></script>
+</body>
+</html>

@@ -1,7 +1,8 @@
 ﻿const API_BASE = window.location.protocol === "file:" ? "http://127.0.0.1:5000" : "";
 
 const tools = [
-  ["youtube", "YouTube Video Downloader", "Download HD videos up to 4K when available.", "youtube", "linear-gradient(135deg,#ff0033,#ff7a59)", "/youtube-video-downloader"],
+  ["passport", "Passport Size Photo Maker", "Create official-size photos and printable sheets.", "passport", "linear-gradient(135deg,#2563eb,#10b981)", "/passport-size-photo-maker"],
+  ["status", "AI Status Maker", "Place your photo inside images or videos automatically.", "status", "linear-gradient(135deg,#ec4899,#f59e0b)", "/ai-status-maker"],
   ["pinterest", "Pinterest Downloader", "Download public Pinterest videos and media.", "pinterest", "linear-gradient(135deg,#e60023,#ff758f)", "/pinterest-downloader"],
   ["thumbnail", "YouTube Thumbnail Downloader", "Download high-resolution YouTube thumbnails.", "youtube", "linear-gradient(135deg,#ff0033,#ff7a59)", "/youtube-thumbnail-downloader"],
   ["qr", "QR Code Generator", "Create crisp QR codes for URLs, payments, and profiles.", "qr", "linear-gradient(135deg,#111827,#f59e0b)", "/qr-code-generator"],
@@ -50,6 +51,8 @@ function toolIcon(name) {
     upscale: `<svg ${common} ${stroke}><path d="M4 14V4h10"/><path d="M4 4l7 7"/><path d="M14 20h6v-6"/><path d="M20 20l-7-7"/></svg>`,
     compress: `<svg ${common} ${stroke}><path d="M8 3v5H3M16 3v5h5M8 21v-5H3M16 21v-5h5"/><path d="M3 8l5-5M21 8l-5-5M3 16l5 5M21 16l-5 5"/></svg>`,
     thumbnail: `<svg ${common} ${stroke}><rect x="3" y="5" width="18" height="14" rx="2"/><path d="m10 9 5 3-5 3z"/></svg>`,
+    passport: `<svg ${common} ${stroke}><rect x="5" y="3" width="14" height="18" rx="2"/><circle cx="12" cy="9" r="2.4"/><path d="M8.2 16.5c.7-2 2-3 3.8-3s3.1 1 3.8 3"/></svg>`,
+    status: `<svg ${common} ${stroke}><rect x="4" y="3" width="16" height="18" rx="3"/><path d="M8 7h8M8 17h8"/><circle cx="12" cy="12" r="3"/></svg>`,
   };
   return icons[name] || `<span>${name}</span>`;
 }
@@ -186,7 +189,7 @@ function delay(ms) {
 function renderCards() {
   const grid = document.querySelector("[data-tools-grid]");
   if (!grid) return;
-  const hideable = new Set(["youtube", "thumbnail", "instagram", "pinterest"]);
+  const hideable = new Set(["thumbnail", "instagram", "pinterest"]);
   const getHidden = () => new Set(JSON.parse(localStorage.getItem("hiddenTools") || "[]"));
   const setHidden = (hidden) => localStorage.setItem("hiddenTools", JSON.stringify([...hidden]));
   let currentQuery = "";
@@ -260,7 +263,7 @@ async function postJSON(url, body, timeoutMs = 90000) {
 }
 
 async function postForm(url, formData) {
-  const timeoutMs = url.includes("/api/image/removebg") ? 300000 : 90000;
+  const timeoutMs = url.includes("/api/image/removebg") || url.includes("/api/status/maker") ? 300000 : 90000;
   const isRemoveBg = url.includes("/api/image/removebg");
   let res = await fetchWithTimeout(API_BASE + url, { method: "POST", body: formData }, timeoutMs);
   for (let attempt = 1; isRemoveBg && [502, 503, 504].includes(res.status) && attempt <= 2; attempt += 1) {
@@ -269,6 +272,85 @@ async function postForm(url, formData) {
     res = await fetchWithTimeout(API_BASE + url, { method: "POST", body: formData }, timeoutMs);
   }
   return parseJSONResponse(res);
+}
+
+function initStatusMaker() {
+  const form = document.querySelector("[data-status-form]");
+  if (!form) return;
+  const background = form.querySelector('input[name="background"]');
+  const portrait = form.querySelector('input[name="portrait"]');
+  const backgroundName = form.querySelector("[data-background-name]");
+  const portraitName = form.querySelector("[data-portrait-name]");
+  const before = document.querySelector("[data-before]");
+  const after = document.querySelector("[data-after]");
+  const submit = form.querySelector('button[type="submit"]');
+
+  const bindZone = (zone, input) => {
+    zone?.addEventListener("click", (event) => {
+      if (event.target === input) return;
+      event.preventDefault();
+      input.click();
+    });
+    ["dragenter", "dragover"].forEach(evt => zone?.addEventListener(evt, event => {
+      event.preventDefault();
+      zone.classList.add("dragover");
+    }));
+    ["dragleave", "drop"].forEach(evt => zone?.addEventListener(evt, event => {
+      event.preventDefault();
+      zone.classList.remove("dragover");
+    }));
+    zone?.addEventListener("drop", event => {
+      input.files = event.dataTransfer.files;
+      input.dispatchEvent(new Event("change"));
+    });
+  };
+
+  bindZone(form.querySelector("[data-background-zone]"), background);
+  bindZone(form.querySelector("[data-portrait-zone]"), portrait);
+
+  background?.addEventListener("change", () => {
+    const file = background.files[0];
+    if (!file) return;
+    backgroundName.textContent = `${file.name} - ${formatBytes(file.size)}`;
+    const url = URL.createObjectURL(file);
+    if (before) {
+      before.innerHTML = file.type.startsWith("video/")
+        ? `<video src="${url}" controls muted playsinline></video>`
+        : `<img src="${url}" alt="Status background preview">`;
+    }
+  });
+
+  portrait?.addEventListener("change", () => {
+    const file = portrait.files[0];
+    if (!file) return;
+    portraitName.textContent = `${file.name} - ${formatBytes(file.size)}`;
+  });
+
+  form.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    if (!background.files[0]) return toast("Please upload a status photo or video.");
+    if (!portrait.files[0]) return toast("Please upload your original photo.");
+    const fd = new FormData(form);
+    try {
+      if (submit) submit.disabled = true;
+      loading(true);
+      const data = await postForm(form.dataset.endpoint, fd);
+      if (after && data.preview_url) {
+        const previewUrl = API_BASE + data.preview_url;
+        after.innerHTML = data.filename?.toLowerCase().endsWith(".mp4")
+          ? `<video src="${previewUrl}" controls playsinline></video>`
+          : `<img src="${previewUrl}" alt="Status result preview">`;
+      }
+      showResult(data, { autoDownload: false });
+      toast("Status ready.");
+    } catch (err) {
+      toast(err.message);
+      showError(err.message);
+    } finally {
+      loading(false);
+      if (submit) submit.disabled = false;
+    }
+  });
 }
 
 function showError(message) {
@@ -1026,4 +1108,5 @@ document.addEventListener("DOMContentLoaded", () => {
   initWatermarkStudio();
   initUploadTool();
   initVideoUploadTool();
+  initStatusMaker();
 });
