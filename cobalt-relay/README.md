@@ -1,6 +1,6 @@
 # ThugTools Cobalt Relay
 
-This optional relay gives the YouTube downloader another cookieless server path when the main Railway IP is blocked.
+This relay is the production YouTube download provider for ThugTools. The main backend does not use YouTube cookies, manual browser sessions, or scraped public resolver lists; it calls only the Cobalt-compatible relays you configure.
 
 Use it only for public content you own or are allowed to process.
 
@@ -29,3 +29,5 @@ COBALT_API_URLS=https://relay-1.example/,https://relay-2.example/
 ```
 
 Then redeploy ThugTools.
+
+For heavy traffic, run relays in separate VPS regions and keep the main backend's `DOWNLOAD_RATE_LIMIT_PER_MINUTE` and `MEDIA_MAX_CONCURRENT_DOWNLOADS` conservative. Failed relays are cooled down automatically by the backend.

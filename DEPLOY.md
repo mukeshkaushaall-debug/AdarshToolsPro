@@ -14,7 +14,7 @@
 Railway will use the root `Dockerfile`, install FFmpeg and Python dependencies, then run:
 
 ```sh
-gunicorn app:app --bind 0.0.0.0:${PORT} --workers 1 --threads 4 --timeout 300
+gunicorn app:app --bind 0.0.0.0:${PORT} --workers ${WEB_CONCURRENCY:-1} --threads ${GUNICORN_THREADS:-6}
 ```
 
 The Docker image uses Python 3.11 for better compatibility with `rembg` and `onnxruntime`.
@@ -28,44 +28,31 @@ The Docker image uses Python 3.11 for better compatibility with `rembg` and `onn
 
 ## YouTube Reliability Variables
 
-YouTube runs in forced cookieless mode by default. The backend first tries yt-dlp with PO-token support, then parallel Invidious/Piped resolver fallbacks, and finally a configured Cobalt relay. Public Cobalt APIs are not assumed; use your own relay from `cobalt-relay/`.
+YouTube runs in forced cookieless mode. The backend no longer uses YouTube cookies, manual browser sessions, or public Invidious/Piped scraping. Metadata uses oEmbed/thumbnail cache; downloads use only configured Cobalt-compatible relays.
 
 - `YOUTUBE_FORCE_COOKIELESS=1`
 - `COBALT_API_URL=https://your-cobalt-relay.example/`
 - `COBALT_API_URLS=https://backup-1.example/,https://backup-2.example/`
 
-For strongest uptime, run 2-3 Cobalt relays in different regions/providers and list every relay in `COBALT_API_URLS`. The app rotates configured relays, cools down failed relays, and reuses fresh preview formats before asking YouTube to extract again.
+For strongest uptime, run 2-3 Cobalt relays in different regions/providers and list every relay in `COBALT_API_URLS`. The app retries configured relays, cools down failed relays, rate-limits abusive clients, and keeps metadata cached so preview traffic stays cheap.
 
-Cookies are ignored unless you explicitly set `YOUTUBE_FORCE_COOKIELESS=0` and `YOUTUBE_USE_COOKIES=1`. If you choose to use cookies for content you are allowed to access, add multiple fresh cookie profiles in Railway **Variables** so the backend can retry automatically:
+Optional stability/security variables:
 
-- `YOUTUBE_COOKIES_TEXT_1`
-- `YOUTUBE_COOKIES_TEXT_2`
-- `YOUTUBE_COOKIES_TEXT_3`
+- `API_KEYS=key-one,key-two` to require `X-API-Key` for `/api/*` calls.
+- `API_RATE_LIMIT_PER_MINUTE=90`
+- `INFO_RATE_LIMIT_PER_MINUTE=45`
+- `DOWNLOAD_RATE_LIMIT_PER_MINUTE=12`
+- `MEDIA_MAX_CONCURRENT_DOWNLOADS=3`
+- `MEDIA_MAX_CONCURRENT_INFO=8`
+- `MEDIA_QUEUE_WAIT_SECONDS=8`
+- `COBALT_TIMEOUT_SECONDS=75`
+- `COBALT_MAX_RELAYS_PER_REQUEST=4`
 
-Optional advanced variables:
-
-- `YOUTUBE_VISITOR_DATA`
-- `YOUTUBE_PO_TOKEN`
-- `YOUTUBE_PO_TOKEN_2`
-- `YOUTUBE_ALLOW_NO_COOKIES_FALLBACK=1`
-
-After adding or refreshing variables, redeploy and open `/api/youtube/status`. Confirm `cookie_profile_count` is at least `2` and `yt_dlp_version` is current.
+After setting variables, redeploy and open `/api/youtube/status`. Confirm `public_instance_scraping=false`, `cookies_supported=false`, and `cobalt_configured=true`.
 
 ## Instagram Reliability Variables
 
-Instagram first tries cookieless public methods: yt-dlp public extraction, GraphQL, magic params, public page scraping, preview URL reuse, and optional Cobalt relay backups. For self-hosted relay fallback, use the same `COBALT_API_URL` / `COBALT_API_URLS` variables above.
-
-Cookies remain optional. If you choose to use them for content you are allowed to access, the backend can rotate multiple Instagram cookie profiles:
-
-- `INSTAGRAM_COOKIES_TEXT_1`
-- `INSTAGRAM_COOKIES_TEXT_2`
-- `INSTAGRAM_COOKIES_TEXT_3`
-
-Optional:
-
-- `INSTAGRAM_ALLOW_NO_COOKIES_FALLBACK=1`
-
-After adding or refreshing variables, redeploy and open `/api/instagram/status`. Confirm `cookie_profile_count` is at least `2`. For best reliability, paste the link, wait for the preview to load, then click download so the backend can reuse the preview session.
+Instagram is also configured for public, cookieless media only. For best reliability, paste the link, wait for the preview to load, then click download so the backend can reuse the preview result when possible. Open `/api/instagram/status` and confirm `cookies_supported=false`.
 
 ## Notes
 

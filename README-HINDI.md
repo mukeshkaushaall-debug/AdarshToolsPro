@@ -77,7 +77,7 @@ http://127.0.0.1:5000
 
 ## Important notes
 
-- YouTube, Instagram, Pinterest downloader public URLs par kaam karega. Private/login wali links ke liye cookies/auth setup chahiye hota hai.
+- YouTube, Instagram, Pinterest downloader sirf public URLs par kaam karega. Private/login wali links support nahi hoti, aur backend cookies/manual browser sessions use nahi karta.
 - 1080p tabhi milega jab source video me 1080p available ho.
 - Remove background ka first run model download kar sakta hai, isliye pehli baar thoda time lag sakta hai.
 - Downloaded files `backend/downloads` me save hote hain.
