@@ -3,8 +3,6 @@
 const LOCAL_API_HELP = "Could not reach the processing server. Open the site from http://127.0.0.1:5000 or start Flask on port 5000, then try again.";
 
 const tools = [
-  ["passport", "Passport Size Photo Maker", "Create official-size photos and printable sheets.", "passport", "linear-gradient(135deg,#2563eb,#10b981)", "/passport-size-photo-maker"],
-  ["status", "AI Status Maker", "Place your photo inside images or videos automatically.", "status", "linear-gradient(135deg,#ec4899,#f59e0b)", "/ai-status-maker"],
   ["pinterest", "Pinterest Downloader", "Download public Pinterest videos and media.", "pinterest", "linear-gradient(135deg,#e60023,#ff758f)", "/pinterest-downloader"],
   ["thumbnail", "YouTube Thumbnail Downloader", "Download high-resolution YouTube thumbnails.", "youtube", "linear-gradient(135deg,#ff0033,#ff7a59)", "/youtube-thumbnail-downloader"],
   ["qr", "QR Code Generator", "Create crisp QR codes for URLs, payments, and profiles.", "qr", "linear-gradient(135deg,#111827,#f59e0b)", "/qr-code-generator"],
@@ -53,8 +51,6 @@ function toolIcon(name) {
     upscale: `<svg ${common} ${stroke}><path d="M4 14V4h10"/><path d="M4 4l7 7"/><path d="M14 20h6v-6"/><path d="M20 20l-7-7"/></svg>`,
     compress: `<svg ${common} ${stroke}><path d="M8 3v5H3M16 3v5h5M8 21v-5H3M16 21v-5h5"/><path d="M3 8l5-5M21 8l-5-5M3 16l5 5M21 16l-5 5"/></svg>`,
     thumbnail: `<svg ${common} ${stroke}><rect x="3" y="5" width="18" height="14" rx="2"/><path d="m10 9 5 3-5 3z"/></svg>`,
-    passport: `<svg ${common} ${stroke}><rect x="5" y="3" width="14" height="18" rx="2"/><circle cx="12" cy="9" r="2.4"/><path d="M8.2 16.5c.7-2 2-3 3.8-3s3.1 1 3.8 3"/></svg>`,
-    status: `<svg ${common} ${stroke}><rect x="4" y="3" width="16" height="18" rx="3"/><path d="M8 7h8M8 17h8"/><circle cx="12" cy="12" r="3"/></svg>`,
   };
   return icons[name] || `<span>${name}</span>`;
 }
@@ -265,7 +261,7 @@ async function postJSON(url, body, timeoutMs = 90000) {
 }
 
 async function postForm(url, formData) {
-  const timeoutMs = url.includes("/api/image/removebg") || url.includes("/api/status/maker") ? 300000 : 90000;
+  const timeoutMs = url.includes("/api/image/removebg") ? 300000 : 90000;
   const isRemoveBg = url.includes("/api/image/removebg");
   let res = await fetchWithTimeout(API_BASE + url, { method: "POST", body: formData }, timeoutMs);
   for (let attempt = 1; isRemoveBg && [502, 503, 504].includes(res.status) && attempt <= 2; attempt += 1) {
@@ -274,85 +270,6 @@ async function postForm(url, formData) {
     res = await fetchWithTimeout(API_BASE + url, { method: "POST", body: formData }, timeoutMs);
   }
   return parseJSONResponse(res);
-}
-
-function initStatusMaker() {
-  const form = document.querySelector("[data-status-form]");
-  if (!form) return;
-  const background = form.querySelector('input[name="background"]');
-  const portrait = form.querySelector('input[name="portrait"]');
-  const backgroundName = form.querySelector("[data-background-name]");
-  const portraitName = form.querySelector("[data-portrait-name]");
-  const before = document.querySelector("[data-before]");
-  const after = document.querySelector("[data-after]");
-  const submit = form.querySelector('button[type="submit"]');
-
-  const bindZone = (zone, input) => {
-    zone?.addEventListener("click", (event) => {
-      if (event.target === input) return;
-      event.preventDefault();
-      input.click();
-    });
-    ["dragenter", "dragover"].forEach(evt => zone?.addEventListener(evt, event => {
-      event.preventDefault();
-      zone.classList.add("dragover");
-    }));
-    ["dragleave", "drop"].forEach(evt => zone?.addEventListener(evt, event => {
-      event.preventDefault();
-      zone.classList.remove("dragover");
-    }));
-    zone?.addEventListener("drop", event => {
-      input.files = event.dataTransfer.files;
-      input.dispatchEvent(new Event("change"));
-    });
-  };
-
-  bindZone(form.querySelector("[data-background-zone]"), background);
-  bindZone(form.querySelector("[data-portrait-zone]"), portrait);
-
-  background?.addEventListener("change", () => {
-    const file = background.files[0];
-    if (!file) return;
-    backgroundName.textContent = `${file.name} - ${formatBytes(file.size)}`;
-    const url = URL.createObjectURL(file);
-    if (before) {
-      before.innerHTML = file.type.startsWith("video/")
-        ? `<video src="${url}" controls muted playsinline></video>`
-        : `<img src="${url}" alt="Status background preview">`;
-    }
-  });
-
-  portrait?.addEventListener("change", () => {
-    const file = portrait.files[0];
-    if (!file) return;
-    portraitName.textContent = `${file.name} - ${formatBytes(file.size)}`;
-  });
-
-  form.addEventListener("submit", async (event) => {
-    event.preventDefault();
-    if (!background.files[0]) return toast("Please upload a status photo or video.");
-    if (!portrait.files[0]) return toast("Please upload your original photo.");
-    const fd = new FormData(form);
-    try {
-      if (submit) submit.disabled = true;
-      loading(true);
-      const data = await postForm(form.dataset.endpoint, fd);
-      if (after && data.preview_url) {
-        const previewUrl = API_BASE + data.preview_url;
-        after.innerHTML = data.filename?.toLowerCase().endsWith(".mp4")
-          ? `<video src="${previewUrl}" controls playsinline></video>`
-          : `<img src="${previewUrl}" alt="Status result preview">`;
-      }
-      showResult(data, { autoDownload: false });
-      toast("Status ready.");
-    } catch (err) {
-      toast(err.message);
-      showError(err.message);
-    } finally {
-      loading(false);
-      if (submit) submit.disabled = false;
-    }
-  });
 }
 
 function showError(message) {
@@ -473,81 +390,6 @@ function resultMeta(data) {
     items.push(`${saved.toFixed(0)}% smaller`);
   }
   return items.map(item => `<span>${item}</span>`).join("");
-}
-
-function passportSpec(form) {
-  const size = form.querySelector('select[name="size"]')?.value || "35x45";
-  const layout = form.querySelector('select[name="layout"]')?.value || "sheet";
-  const background = form.querySelector('select[name="background"]')?.value || "white";
-  const labels = {
-    "35x45": "35 x 45 mm",
-    "2x2": "2 x 2 inch",
-    "51x51": "51 x 51 mm",
-    white: "White background",
-    blue: "Blue background",
-    lightgray: "Light gray background",
-    sheet: "4x6 printable sheet",
-    single: "Single photo",
-  };
-  return {
-    sizeLabel: labels[size] || labels["35x45"],
-    layoutLabel: labels[layout] || labels.sheet,
-    backgroundLabel: labels[background] || labels.white,
-    background,
-  };
-}
-
-function passportFrameClass(background) {
-  return `passport-frame passport-bg-${background === "blue" ? "blue" : background === "lightgray" ? "gray" : "white"}`;
-}
-
-function renderPassportBefore(form, file, url, sizeText = "") {
-  const before = document.querySelector("[data-before]");
-  if (!before) return;
-  const spec = passportSpec(form);
-  before.innerHTML = `
-    <div class="passport-studio">
-      <div class="passport-original"><img src="${url}" alt="Original portrait preview" loading="lazy" decoding="async"></div>
-      <div class="passport-preview-meta">
-        <strong>${file.name}</strong>
-        <span>${formatBytes(file.size)}${sizeText ? ` - ${sizeText}` : ""}</span>
-        <span>${spec.sizeLabel} - ${spec.backgroundLabel}</span>
-      </div>
-    </div>`;
-}
-
-function renderPassportPlaceholder(form) {
-  const after = document.querySelector("[data-after]");
-  if (!after) return;
-  const spec = passportSpec(form);
-  after.innerHTML = `
-    <div class="passport-studio">
-      <div class="${passportFrameClass(spec.background)}">
-        <div class="passport-silhouette"></div>
-      </div>
-      <div class="passport-preview-meta">
-        <strong>${spec.layoutLabel}</strong>
-        <span>${spec.sizeLabel}</span>
-        <span>${spec.backgroundLabel}</span>
-      </div>
-    </div>`;
-}
-
-function renderPassportAfter(form, data, outputUrl) {
-  const after = document.querySelector("[data-after]");
-  if (!after) return;
-  const spec = passportSpec(form);
-  after.innerHTML = `
-    <div class="passport-studio">
-      <div class="passport-result-frame ${spec.layoutLabel.includes("sheet") ? "is-sheet" : ""}">
-        <img src="${outputUrl}" alt="Passport photo result preview" loading="lazy" decoding="async">
-      </div>
-      <div class="passport-preview-meta">
-        <strong>${data.title || "Passport photo ready"}</strong>
-        <span>${data.output_width || ""}${data.output_width ? " x " : ""}${data.output_height || ""} px</span>
-        <span>${spec.layoutLabel}</span>
-      </div>
-    </div>`;
 }
 
 function appendAutoplayParams(value) {
@@ -927,7 +769,6 @@ function initUploadTool() {
   const after = document.querySelector("[data-after]");
   const name = document.querySelector("[data-file-name]");
   const action = form.querySelector("[data-upload-action]") || form.querySelector('button[type="submit"]');
-  const isPassportForm = form.matches("[data-passport-form]");
   let isProcessing = false;
   const setFile = (file) => {
     if (!file) return;
@@ -935,10 +776,7 @@ function initUploadTool() {
     const selected = input.files?.length || 1;
     name.textContent = selected > 1 ? `${selected} files selected` : `${file.name} - ${formatBytes(file.size)}`;
     if (before) {
-      if (isPassportForm) {
-        renderPassportBefore(form, file, url);
-        renderPassportPlaceholder(form);
-      } else if (form.matches("[data-watermark-form]")) {
+      if (form.matches("[data-watermark-form]")) {
         before.innerHTML = `
           <div class="watermark-stage" data-watermark-stage>
             <img src="${url}" alt="Before preview" loading="lazy" decoding="async">
@@ -952,21 +790,9 @@ function initUploadTool() {
     if (file.type.startsWith("image/")) {
       readImageDimensions(file).then(size => {
         if (size && name && selected === 1) name.textContent = `${file.name} - ${formatBytes(file.size)} - ${size}`;
-        if (size && isPassportForm) renderPassportBefore(form, file, url, size);
       });
     }
   };
-  if (isPassportForm) {
-    form.querySelectorAll('select[name="size"], select[name="background"], select[name="layout"]').forEach(control => {
-      control.addEventListener("change", () => {
-        if (input.files[0]) {
-          renderPassportBefore(form, input.files[0], URL.createObjectURL(input.files[0]));
-        }
-        renderPassportPlaceholder(form);
-      });
-    });
-    renderPassportPlaceholder(form);
-  }
   zone.addEventListener("click", (e) => {
     if (e.target === input) return;
     e.preventDefault();
@@ -992,11 +818,7 @@ function initUploadTool() {
       const data = await postForm(form.dataset.endpoint, fd);
       const outputUrl = API_BASE + (data.preview_url || data.download_url);
       if (after && data.preview_url) {
-        if (isPassportForm) {
-          renderPassportAfter(form, data, outputUrl);
-        } else {
-          after.innerHTML = `<img src="${outputUrl}" alt="After preview">`;
-        }
+        after.innerHTML = `<img src="${outputUrl}" alt="After preview">`;
       }
       showResult(data, { autoDownload: false });
       toast(data.download_label?.includes("PDF") || data.download_label?.includes("ZIP") ? "Result ready." : "Image processed successfully.");
@@ -1205,5 +1027,4 @@ document.addEventListener("DOMContentLoaded", () => {
   initWatermarkStudio();
   initUploadTool();
   initVideoUploadTool();
-  initStatusMaker();
 });

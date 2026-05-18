@@ -35,7 +35,7 @@ except ImportError:
     np = None
     ndimage = None
 
-from PIL import Image, ImageChops, ImageDraw, ImageEnhance, ImageFilter, ImageFont, ImageOps, ImageStat
+from PIL import Image, ImageDraw, ImageEnhance, ImageFilter, ImageFont, ImageOps
 from werkzeug.utils import secure_filename
 from werkzeug.exceptions import HTTPException
 from werkzeug.middleware.proxy_fix import ProxyFix
@@ -127,8 +127,6 @@ YOUTUBE_BLOCK_HELP = (
 INSTAGRAM_COOKIES_HELP = "Instagram is asking this server to log in. This deployment runs without cookies, so try a public link again later."
 SEO_PAGES = [
     ("/", "daily", "1.0"),
-    ("/passport-size-photo-maker", "weekly", "0.9"),
-    ("/ai-status-maker", "weekly", "0.9"),
     ("/pinterest-downloader", "weekly", "0.9"),
     ("/instagram-reel-downloader", "weekly", "0.9"),
     ("/youtube-thumbnail-downloader", "weekly", "0.9"),
@@ -192,7 +190,7 @@ TOOL_PAGE_SEO = {
         "how": ["Copy a public Pinterest pin or video link.", "Paste the URL into the downloader.", "Choose a quality and download the result."],
         "features": ["Supports public Pinterest video/media URLs", "Quality selector for available formats", "Preview-friendly workflow for creator references"],
         "faqs": [("Do private Pinterest links work?", "No. Private, login-only, or blocked links may fail."), ("Does every pin include video?", "No. Some pins are image-only or expose limited downloadable media.")],
-        "related": [("/instagram-reel-downloader", "Instagram Downloader"), ("/ai-status-maker", "AI Status Maker"), ("/image-compressor", "Image Compressor")],
+        "related": [("/instagram-reel-downloader", "Instagram Downloader"), ("/image-compressor", "Image Compressor"), ("/remove-background", "Remove Background")],
     },
     "instagram.html": {
         "path": "/instagram-reel-downloader",
@@ -214,7 +212,7 @@ TOOL_PAGE_SEO = {
         "how": ["Paste a public YouTube video URL.", "Click Download thumbnail.", "Preview and save the best available image."],
         "features": ["Checks max resolution, SD, and HQ thumbnail sources", "No file upload needed", "Clean preview before download"],
         "faqs": [("Will every video have a max resolution thumbnail?", "No. Some videos only expose standard or HQ thumbnails."), ("Can I use thumbnails commercially?", "Only if you have rights or permission to use the image.")],
-        "related": [("/passport-size-photo-maker", "Passport Photo Maker"), ("/image-compressor", "Image Compressor"), ("/image-watermark", "Watermark Studio")],
+        "related": [("/image-compressor", "Image Compressor"), ("/image-watermark", "Watermark Studio"), ("/remove-background", "Remove Background")],
     },
     "qr.html": {
         "path": "/qr-code-generator",
@@ -335,7 +333,7 @@ TOOL_PAGE_SEO = {
         "how": ["Paste a public video URL or upload your own video file.", "Start MP3 conversion.", "Download the generated audio file."],
         "features": ["URL and local upload workflows", "Clean MP3 output", "Useful for owned recordings and permitted audio"],
         "faqs": [("Why is FFmpeg needed?", "FFmpeg handles reliable audio extraction and conversion on the server."), ("Can I upload my own video?", "Yes. Supported local video files can be converted to MP3.")],
-        "related": [("/ai-status-maker", "AI Status Maker"), ("/instagram-reel-downloader", "Instagram Downloader"), ("/pinterest-downloader", "Pinterest Downloader")],
+        "related": [("/instagram-reel-downloader", "Instagram Downloader"), ("/pinterest-downloader", "Pinterest Downloader"), ("/image-converter", "Image Converter")],
     },
     "invoice.html": {
         "path": "/invoice-generator",
@@ -347,28 +345,6 @@ TOOL_PAGE_SEO = {
         "features": ["Itemized invoice editor", "Tax and discount support", "Print-ready PDF output"],
         "faqs": [("Is invoice data stored permanently?", "No. Generated files are temporary and cleaned automatically."), ("Can I add tax or GST?", "Yes. Use the tax fields available in the invoice form.")],
         "related": [("/qr-code-generator", "QR Code Generator"), ("/image-to-pdf", "Image to PDF"), ("/pdf-to-image", "PDF to Image")],
-    },
-    "passport.html": {
-        "path": "/passport-size-photo-maker",
-        "title": "Passport Size Photo Maker - Create Free ID Photos Online | ThugTools",
-        "description": "Create passport size photos online with white, blue, or gray background and download a single photo or printable 4x6 sheet.",
-        "keywords": "passport size photo maker, passport photo online, id photo maker, 35x45 photo, 2x2 photo",
-        "category": "MultimediaApplication",
-        "how": ["Upload a clear front-facing portrait.", "Choose size, background color, and output layout.", "Create and download the passport photo or printable sheet."],
-        "features": ["35x45 mm, 51x51 mm, and 2x2 inch sizes", "White, blue, and light gray backgrounds", "Single photo or 4x6 printable sheet export"],
-        "faqs": [("Which portrait works best?", "Use a sharp front-facing photo with good lighting."), ("Can I print the sheet?", "Yes. The 4x6 sheet is designed for easy photo printing.")],
-        "related": [("/remove-background", "Remove Background"), ("/ai-image-enhancer", "AI Image Enhancer"), ("/image-compressor", "Image Compressor")],
-    },
-    "status.html": {
-        "path": "/ai-status-maker",
-        "title": "AI Status Maker - Add Your Photo to Status Images & Videos | ThugTools",
-        "description": "Upload a status image or video and your original photo. ThugTools creates a cutout and places your photo automatically.",
-        "keywords": "ai status maker, photo status maker, video status maker, add photo to video, status editor",
-        "category": "MultimediaApplication",
-        "how": ["Upload a status image or video.", "Upload your original photo.", "Choose style and placement, then download the status."],
-        "features": ["Smart position selection for image statuses", "Portrait cutout with shadow or circle frame", "MP4 video overlay export when FFmpeg is available"],
-        "faqs": [("Can I use videos?", "Yes, if the server has FFmpeg installed."), ("Does it store my files?", "Generated files are temporary and cleaned automatically.")],
-        "related": [("/passport-size-photo-maker", "Passport Photo Maker"), ("/remove-background", "Remove Background"), ("/image-watermark", "Watermark Studio")],
     },
 }
 
@@ -2181,196 +2157,6 @@ def image_bytes_from_pil(img):
     return buffer.getvalue()
 
 
-def passport_dimensions(size_key):
-    sizes = {
-        "35x45": (413, 531),
-        "2x2": (600, 600),
-        "51x51": (602, 602),
-    }
-    return sizes.get(size_key, sizes["35x45"])
-
-
-def solid_background(name, size):
-    colors = {
-        "white": (255, 255, 255, 255),
-        "blue": (214, 232, 255, 255),
-        "lightgray": (239, 242, 247, 255),
-    }
-    return Image.new("RGBA", size, colors.get(name, colors["white"]))
-
-
-def portrait_cutout(img, feather=1):
-    base = ImageOps.exif_transpose(img).convert("RGBA")
-    if remove_background is not None:
-        try:
-            result = remove_background(image_bytes_from_pil(base), alpha_matting=False)
-            with Image.open(io.BytesIO(result)) as cutout:
-                return ImageOps.exif_transpose(cutout).convert("RGBA")
-        except Exception:
-            pass
-    mask = subject_mask_from_image(base, feather=feather)
-    base.putalpha(mask)
-    return base
-
-
-def make_passport_photo(source_path, size_key="35x45", background="white", layout="sheet", auto_enhance=True):
-    target_size = passport_dimensions(size_key)
-    with Image.open(source_path) as img:
-        cutout = portrait_cutout(img, feather=1)
-        if auto_enhance:
-            rgb = enhance_image(cutout, mode="portrait", strength=54).convert("RGBA")
-            rgb.putalpha(cutout.getchannel("A"))
-            cutout = rgb
-        canvas = solid_background(background, target_size)
-        max_w = int(target_size[0] * 0.82)
-        max_h = int(target_size[1] * 0.92)
-        subject = cutout.copy()
-        subject.thumbnail((max_w, max_h), Image.Resampling.LANCZOS)
-        x = (target_size[0] - subject.width) // 2
-        y = max(6, int(target_size[1] * 0.06))
-        canvas.alpha_composite(subject, (x, y))
-        single = canvas.convert("RGB")
-        if layout != "sheet":
-            out = DOWNLOAD_DIR / f"{make_id()}_passport_photo.jpg"
-            save_jpeg_fast(single, out, quality=94)
-            return out, target_size
-        sheet = Image.new("RGB", (1800, 1200), "white")
-        margin, gap = 70, 34
-        photo = single
-        cols = max(1, (sheet.width - margin * 2 + gap) // (photo.width + gap))
-        rows = max(1, (sheet.height - margin * 2 + gap) // (photo.height + gap))
-        draw = ImageDraw.Draw(sheet)
-        count = 0
-        for row in range(rows):
-            for col in range(cols):
-                x = margin + col * (photo.width + gap)
-                y = margin + row * (photo.height + gap)
-                if x + photo.width > sheet.width - margin or y + photo.height > sheet.height - margin:
-                    continue
-                sheet.paste(photo, (x, y))
-                draw.rectangle((x, y, x + photo.width - 1, y + photo.height - 1), outline=(215, 221, 232), width=2)
-                count += 1
-                if count >= 12:
-                    break
-            if count >= 12:
-                break
-        out = DOWNLOAD_DIR / f"{make_id()}_passport_sheet.jpg"
-        save_jpeg_fast(sheet, out, quality=94)
-        return out, sheet.size
-
-
-def status_background_kind(path):
-    ext = path.suffix.lower().lstrip(".")
-    if ext in ALLOWED_IMAGE_EXT:
-        return "image"
-    if ext in ALLOWED_VIDEO_EXT:
-        return "video"
-    raise ApiError("Upload an image or video status background.")
-
-
-def save_uploaded_media(file_storage, field_name):
-    if not file_storage or not file_storage.filename:
-        raise ApiError(f"Please upload {field_name}.")
-    filename = secure_filename(file_storage.filename)
-    ext = filename.rsplit(".", 1)[-1].lower() if "." in filename else ""
-    if ext not in ALLOWED_IMAGE_EXT | ALLOWED_VIDEO_EXT:
-        raise ApiError("Only image and video status backgrounds are supported.")
-    target = UPLOAD_DIR / f"{make_id()}_{filename}"
-    file_storage.save(target)
-    return target
-
-
-def choose_status_position(bg, placement, overlay_size):
-    width, height = bg.size
-    ow, oh = overlay_size
-    margin = int(width * 0.05)
-    y = max(margin, height - oh - margin)
-    right_x = max(margin, width - ow - margin)
-    center_x = max(margin, (width - ow) // 2)
-    positions = {
-        "left": (margin, y),
-        "right": (right_x, y),
-        "center": (center_x, y),
-    }
-    if placement in positions:
-        return positions[placement]
-    gray = bg.convert("L")
-    candidates = [positions["left"], positions["right"], positions["center"]]
-    scored = []
-    for x, y in candidates:
-        crop = gray.crop((x, y, min(width, x + ow), min(height, y + oh)))
-        stat = ImageStat.Stat(crop)
-        variance = stat.var[0] if stat.var else 0
-        brightness = stat.mean[0] if stat.mean else 128
-        scored.append((variance + abs(brightness - 132) * 0.18, x, y))
-    _, x, y = min(scored)
-    return x, y
-
-
-def status_overlay_image(portrait_path, target_width, style="smart", shadow=58):
-    with Image.open(portrait_path) as img:
-        cutout = portrait_cutout(img, feather=2)
-    cutout.thumbnail((target_width, target_width * 2), Image.Resampling.LANCZOS)
-    if style == "circle":
-        side = min(cutout.width, cutout.height)
-        square = Image.new("RGBA", (side, side), (0, 0, 0, 0))
-        crop = cutout.crop(((cutout.width - side) // 2, (cutout.height - side) // 2, (cutout.width + side) // 2, (cutout.height + side) // 2))
-        mask = Image.new("L", (side, side), 0)
-        ImageDraw.Draw(mask).ellipse((0, 0, side - 1, side - 1), fill=255)
-        square.alpha_composite(crop)
-        square.putalpha(ImageChops.multiply(square.getchannel("A"), mask))
-        cutout = square
-    pad = max(18, int(cutout.width * 0.08))
-    framed = Image.new("RGBA", (cutout.width + pad * 2, cutout.height + pad * 2), (0, 0, 0, 0))
-    if shadow:
-        alpha = Image.new("L", framed.size, 0)
-        alpha.paste(cutout.getchannel("A"), (pad, pad))
-        alpha = alpha.filter(ImageFilter.GaussianBlur(max(4, int(pad * 0.65))))
-        shadow_layer = Image.new("RGBA", framed.size, (0, 0, 0, int(120 * shadow / 100)))
-        framed.alpha_composite(Image.composite(shadow_layer, Image.new("RGBA", framed.size), alpha))
-    framed.alpha_composite(cutout, (pad, pad))
-    return framed
-
-
-def make_status_image(background_path, portrait_path, style="smart", placement="auto", scale=42, shadow=58):
-    with Image.open(background_path) as bg_img:
-        bg = ImageOps.exif_transpose(bg_img).convert("RGBA")
-        bg.thumbnail((1440, 1440), Image.Resampling.LANCZOS)
-        overlay = status_overlay_image(portrait_path, int(bg.width * scale / 100), style=style, shadow=shadow)
-        x, y = choose_status_position(bg, placement, overlay.size)
-        bg.alpha_composite(overlay, (x, y))
-        out = DOWNLOAD_DIR / f"{make_id()}_status.png"
-        bg.save(out, "PNG", optimize=True)
-        return out
-
-
-def make_status_video(background_path, portrait_path, style="smart", placement="auto", scale=42, shadow=58):
-    ffmpeg = shutil.which("ffmpeg")
-    if not ffmpeg:
-        raise ApiError("Video status export needs FFmpeg on the server. Try an image status, or install FFmpeg.")
-    overlay = status_overlay_image(portrait_path, 720, style=style, shadow=shadow)
-    overlay_path = UPLOAD_DIR / f"{make_id()}_status_overlay.png"
-    overlay.save(overlay_path, "PNG")
-    x_expr = "(W-w)/2" if placement == "center" else "W-w-W*0.05" if placement in {"auto", "right"} else "W*0.05"
-    y_expr = "H-h-H*0.05"
-    out = DOWNLOAD_DIR / f"{make_id()}_status.mp4"
-    cmd = [
-        ffmpeg, "-y", "-i", str(background_path), "-i", str(overlay_path),
-        "-filter_complex", f"[1:v][0:v]scale2ref=w=main_w*{scale}/100:h=-1[ov][base];[base][ov]overlay={x_expr}:{y_expr}:format=auto",
-        "-map", "0:a?", "-c:v", "libx264", "-preset", "veryfast", "-crf", "23", "-c:a", "aac",
-        "-movflags", "+faststart", "-shortest", str(out)
-    ]
-    try:
-        subprocess.run(cmd, check=True, capture_output=True, text=True, timeout=240)
-    except subprocess.TimeoutExpired:
-        raise ApiError("Video took too long to render. Try a shorter status video.")
-    except subprocess.CalledProcessError as error:
-        raise ApiError((error.stderr or "Could not render status video.")[-240:])
-    finally:
-        delete_quietly(overlay_path)
-    return out
-
-
 def create_blur_background(img, mode="subject", blur=22, feather=8):
     base = ImageOps.exif_transpose(img).convert("RGB")
     background = ImageEnhance.Contrast(base.filter(ImageFilter.GaussianBlur(blur))).enhance(1.03)
@@ -3536,15 +3322,7 @@ def favicon():
 # Clean URL routes for SEO-friendly tool pages
 @app.route("/youtube-video-downloader")
 def tool_youtube():
-    return redirect("/passport-size-photo-maker", code=301)
-
-@app.route("/passport-size-photo-maker")
-def tool_passport():
-    return seo_html("passport.html", "pages")
-
-@app.route("/ai-status-maker")
-def tool_status():
-    return seo_html("status.html", "pages")
+    return seo_html("youtube.html", "pages")
 
 @app.route("/pinterest-downloader")
 def tool_pinterest():
@@ -3725,9 +3503,7 @@ def contact_page():
 
 # Canonical URL mapping for /pages/* redirects (301 permanent redirects)
 PAGES_REDIRECT_MAP = {
-    "youtube.html": "/passport-size-photo-maker",
-    "passport.html": "/passport-size-photo-maker",
-    "status.html": "/ai-status-maker",
+    "youtube.html": "/youtube-video-downloader",
     "pinterest.html": "/pinterest-downloader",
     "instagram.html": "/instagram-reel-downloader",
     "thumbnail.html": "/youtube-thumbnail-downloader",
@@ -4111,59 +3887,6 @@ def image_watermark():
         return jsonify(image_response(out, "Download watermarked image"))
     finally:
         delete_quietly(source)
-
-
-@app.post("/api/photo/passport")
-def photo_passport():
-    cleanup_temp_storage()
-    source = safe_file_from_upload(request.files.get("file"))
-    try:
-        out, size = make_passport_photo(
-            source,
-            size_key=request.form.get("size", "35x45"),
-            background=request.form.get("background", "white"),
-            layout=request.form.get("layout", "sheet"),
-            auto_enhance=request.form.get("enhance", "1") != "0",
-        )
-        return jsonify({
-            **image_response(out, "Download passport photo"),
-            "title": "Passport photo ready",
-            "output_width": size[0],
-            "output_height": size[1],
-        })
-    finally:
-        delete_quietly(source)
-
-
-@app.post("/api/status/maker")
-def status_maker():
-    cleanup_temp_storage()
-    background = save_uploaded_media(request.files.get("background"), "a status photo or video")
-    portrait = safe_file_from_upload(request.files.get("portrait"))
-    try:
-        style = request.form.get("style", "smart")
-        if style not in {"smart", "clean", "circle"}:
-            style = "smart"
-        placement = request.form.get("placement", "auto")
-        if placement not in {"auto", "left", "right", "center"}:
-            placement = "auto"
-        scale = clamp_int(request.form.get("scale"), 42, 28, 58)
-        shadow = clamp_int(request.form.get("shadow"), 58, 0, 100)
-        if status_background_kind(background) == "video":
-            out = make_status_video(background, portrait, style=style, placement=placement, scale=scale, shadow=shadow)
-            return jsonify({
-                **file_response(out, "Download status video"),
-                "preview_url": public_download_url(out.name),
-                "title": "Video status ready",
-            })
-        out = make_status_image(background, portrait, style=style, placement=placement, scale=scale, shadow=shadow)
-        return jsonify({
-            **image_response(out, "Download status image"),
-            "title": "Image status ready",
-        })
-    finally:
-        delete_quietly(background)
-        delete_quietly(portrait)
 
 
 @app.post("/api/qr/generate")
