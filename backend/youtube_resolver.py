@@ -11,17 +11,13 @@ import requests
 
 # Multiple user agents for rotation
 USER_AGENTS = [
-    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
-    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36",
-    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
-    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36",
-    "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:132.0) Gecko/20100101 Firefox/132.0",
-    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10.15; rv:132.0) Gecko/20100101 Firefox/132.0",
-    "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
-    "Mozilla/5.0 (iPhone; CPU iPhone OS 17_2 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.2 Mobile/15E148 Safari/604.1",
-    "Mozilla/5.0 (iPad; CPU OS 17_2 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.2 Mobile/15E148 Safari/604.1",
-    "Mozilla/5.0 (Linux; Android 14) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Mobile Safari/537.36",
-    "Mozilla/5.0 (Linux; Android 13) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Mobile Safari/537.36",
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/132.0.0.0 Safari/537.36",
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/132.0.0.0 Safari/537.36",
+    "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/132.0.0.0 Safari/537.36",
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:133.0) Gecko/20100101 Firefox/133.0",
+    "Mozilla/5.0 (iPhone; CPU iPhone OS 18_2 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.2 Mobile/15E148 Safari/604.1",
+    "Mozilla/5.0 (iPad; CPU OS 18_2 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.2 Mobile/15E148 Safari/604.1",
+    "Mozilla/5.0 (Linux; Android 15; Pixel 9) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/132.0.0.0 Mobile Safari/537.36",
 ]
 
 def get_random_user_agent():
@@ -30,27 +26,26 @@ def get_random_user_agent():
 
 def get_random_headers():
     """Generate random headers to mimic different browsers."""
+    ua = get_random_user_agent()
+    platform = "Windows"
+    if "Macintosh" in ua: platform = "macOS"
+    elif "iPhone" in ua: platform = "iOS"
+    elif "Android" in ua: platform = "Android"
+    elif "X11" in ua or "Linux" in ua: platform = "Linux"
+    
     return {
-        "User-Agent": get_random_user_agent(),
-        "Accept": random.choice([
-            "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-            "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
-            "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
-        ]),
+        "User-Agent": ua,
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7",
         "Accept-Language": random.choice([
-            "en-US,en;q=0.9",
-            "en-US,en;q=0.9,hi;q=0.8",
-            "en-GB,en;q=0.9",
-            "en-IN,en;q=0.9,hi;q=0.8",
+            "en-US,en;q=0.9", "en-US,en;q=0.9,hi;q=0.8", "en-GB,en;q=0.9", "en-IN,en;q=0.9,hi;q=0.8",
         ]),
         "Accept-Encoding": "gzip, deflate, br",
         "DNT": random.choice(["1", "0"]),
         "Connection": "keep-alive",
         "Upgrade-Insecure-Requests": "1",
-        "Sec-Fetch-Dest": random.choice(["document", "empty"]),
-        "Sec-Fetch-Mode": random.choice(["navigate", "cors"]),
-        "Sec-Fetch-Site": random.choice(["none", "same-origin", "cross-site"]),
-        "Cache-Control": random.choice(["max-age=0", "no-cache"]),
+        "Sec-Fetch-Dest": "document", "Sec-Fetch-Mode": "navigate", "Sec-Fetch-Site": "none", "Sec-Fetch-User": "?1",
+        "Sec-Ch-Ua-Mobile": "?1" if "Mobile" in ua else "?0",
+        "Sec-Ch-Ua-Platform": f'"{platform}"',
     }
 
 UA = USER_AGENTS[0]
@@ -61,6 +56,22 @@ STATIC_INVIDIOUS = [
     "https://vid.puffyan.us",
     "https://invidious.fdn.fr",
     "https://yt.artemislena.eu",
+    "https://invidious.snopyta.org",
+    "https://yewtu.be",
+    "https://invidious.kavin.rocks",
+    "https://inv.riverside.rocks",
+    "https://invidious.tiekoetter.com",
+    "https://invidious.privacydev.net",
+    "https://iv.ggtyler.dev",
+    "https://inv.tux.pizza",
+    "https://invidious.no-logs.com",
+    "https://inv.nand.sh",
+    "https://invidious.mutatux.org",
+    "https://invidious.protokolla.fi",
+    "https://invidious.pistasjis.net",
+    "https://invidious.lunar.icu",
+    "https://invidious.perennialte.ch",
+    "https://invidious.esmailelbob.xyz",
     "https://invidious.private.coffee",
     "https://invidious.privacyredirect.com",
     "https://invidious.dhusch.de",
@@ -112,6 +123,11 @@ STATIC_PIPED = [
     "https://pipedapi.leptons.xyz",
     "https://pipedapi.nosebs.ru",
     "https://pipedapi.garudalinux.org",
+    "https://pipedapi.mha.fi",
+    "https://pipedapi.xyz.kiwi",
+    "https://pipedapi.moomoo.me",
+    "https://pipedapi.sync.sh",
+    "https://pipedapi.astreon.xyz",
     "https://pipedapi.projectsegfau.lt",
     "https://pipedapi.mint.lgbt",
     "https://pipedapi.esmailelbob.xyz",

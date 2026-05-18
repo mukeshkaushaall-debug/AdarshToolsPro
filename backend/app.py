@@ -26,6 +26,14 @@ import requests
 import certifi
 from flask import Flask, Response, jsonify, request, send_file, send_from_directory, redirect
 from flask_cors import CORS
+
+try:
+    import numpy as np
+    import scipy.ndimage as ndimage
+except ImportError:
+    np = None
+    ndimage = None
+
 from PIL import Image, ImageDraw, ImageEnhance, ImageFilter, ImageFont, ImageOps
 from werkzeug.utils import secure_filename
 from werkzeug.exceptions import HTTPException
@@ -694,17 +702,17 @@ def youtube_extractor_args(client):
 def ytdlp_base_opts(client="web", cookie_source=None):
     """Generate base yt-dlp options with advanced client emulation for YouTube blocking avoidance."""
     user_agents = {
-        "web": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36",
-        "mweb": "Mozilla/5.0 (Linux; Android 14) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Mobile Safari/537.36",
-        "tv": "Mozilla/5.0 (CrKey armv7l 1.54.192706) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36",
+        "web": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/132.0.0.0 Safari/537.36",
+        "mweb": "Mozilla/5.0 (Linux; Android 15; Pixel 9) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/132.0.0.0 Mobile Safari/537.36",
+        "tv": "Mozilla/5.0 (CrKey armv7l 1.54.192706) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/132.0.0.0 Safari/537.36",
     }
     
     # Comprehensive HTTP headers to mimic real browser
     http_headers = {
         "User-Agent": user_agents.get(client, user_agents["web"]),
-        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7",
         "Accept-Language": "en-US,en;q=0.9,hi;q=0.8",
-        "Accept-Encoding": "gzip, deflate",
+        "Accept-Encoding": "gzip, deflate, br",
         "DNT": "1",
         "Connection": "keep-alive",
         "Upgrade-Insecure-Requests": "1",
@@ -712,9 +720,8 @@ def ytdlp_base_opts(client="web", cookie_source=None):
         "Sec-Fetch-Mode": "navigate",
         "Sec-Fetch-Site": "none",
         "Sec-Fetch-User": "?1",
-        "Sec-Ch-Ua": '"Not A(Brand";v="99", "Google Chrome";v="125", "Chromium";v="125"',
-        "Sec-Ch-Ua-Mobile": "?1" if client == "mweb" else "?0",
-        "Sec-Ch-Ua-Platform": '"Android"' if client == "mweb" else '"Windows"',
+        "Sec-Ch-Ua-Mobile": "?1" if "mweb" in client or "android" in client else "?0",
+        "Sec-Ch-Ua-Platform": '"Android"' if "mweb" in client or "android" in client else '"iOS"' if "ios" in client else '"Windows"',
     }
     
     opts = {
@@ -1171,13 +1178,16 @@ def postprocess_cutout(path, feather=2, background="transparent", hd_mode=False)
     """Minimal cutout post-processing to preserve content."""
     with Image.open(path) as img:
         rgba = img.convert("RGBA")
-        
-        # Get alpha channel
+        rgb = rgba.convert("RGB")
         alpha_channel = rgba.split()[3]
         
-        # Apply light feathering only
-        if feather > 0:
-            alpha_channel = alpha_channel.filter(ImageFilter.GaussianBlur(min(feather, 4) * 0.3))
+        # Use advanced refinement if numpy/scipy are available
+        if np is not None and ndimage is not None:
+            alpha_channel = refine_cutout_alpha_advanced(alpha_channel, rgb, feather=feather, hd_mode=hd_mode)
+        else:
+            # Fallback to simple feathering
+            if feather > 0:
+                alpha_channel = alpha_channel.filter(ImageFilter.GaussianBlur(min(feather, 4) * 0.3))
         
         # Apply refined alpha
         rgba.putalpha(alpha_channel)
@@ -1213,8 +1223,9 @@ def refine_cutout_alpha_advanced(alpha, rgb, feather=1, hd_mode=False):
     - Anti-aliasing
     - Contour rendering
     """
-    import numpy as np
-    
+    if np is None or ndimage is None:
+        return alpha
+
     # Convert to numpy for advanced processing
     alpha_array = np.array(alpha, dtype=np.float32)
     rgb_array = np.array(rgb, dtype=np.float32)
@@ -1279,8 +1290,8 @@ def cleanup_transparent_pixels(alpha_array):
     
     # Also clean very small transparent islands inside opaque regions
     binary_inv = 1 - cleaned
-    labeled_inv, num_features_inv = scipy.ndimage.label(binary_inv)
-    sizes_inv = scipy.ndimage.sum(binary_inv, labeled_inv, range(num_features_inv + 1))
+    labeled_inv, num_features_inv = ndimage.label(binary_inv)
+    sizes_inv = ndimage.sum(binary_inv, labeled_inv, range(num_features_inv + 1))
     
     for i in range(1, num_features_inv + 1):
         if sizes_inv[i] < min_region_size:
@@ -1291,9 +1302,6 @@ def cleanup_transparent_pixels(alpha_array):
 
 def adaptive_alpha_threshold(alpha_array):
     """Apply adaptive thresholding for better boundary detection."""
-    import numpy as np
-    import scipy.ndimage
-    
     alpha_norm = alpha_array / 255.0
     
     # Calculate local mean for adaptive thresholding
@@ -1301,8 +1309,6 @@ def adaptive_alpha_threshold(alpha_array):
     if kernel_size % 2 == 0:
         kernel_size += 1
     
-    # Compute local statistics using morphology
-    from scipy import ndimage
     local_mean = ndimage.uniform_filter(alpha_norm, size=kernel_size)
     local_var = ndimage.uniform_filter(alpha_norm**2, size=kernel_size) - local_mean**2
     local_std = np.sqrt(np.maximum(local_var, 0))
@@ -1318,10 +1324,6 @@ def adaptive_alpha_threshold(alpha_array):
 
 def refine_edges_morphological(alpha_array):
     """Apply morphological operations to refine edges."""
-    import numpy as np
-    import scipy.ndimage
-    from scipy import ndimage
-    
     alpha_norm = alpha_array / 255.0
     
     # Create binary mask for operations
@@ -1347,9 +1349,6 @@ def refine_edges_morphological(alpha_array):
 
 def color_aware_edge_blend(alpha_array, rgb_array):
     """Blend edges based on color information for smooth transitions."""
-    import numpy as np
-    from scipy import ndimage
-    
     alpha_norm = alpha_array / 255.0 if alpha_array.max() > 1 else alpha_array
     
     # Calculate color gradients
@@ -1371,9 +1370,6 @@ def color_aware_edge_blend(alpha_array, rgb_array):
 
 def apply_antialiasing(alpha_array):
     """Apply anti-aliasing filter to reduce jagged edges."""
-    import numpy as np
-    from scipy import ndimage
-    
     alpha_norm = alpha_array / 255.0 if alpha_array.max() > 1 else alpha_array
     
     # Apply edge-aware bilateral-like filter
@@ -1389,9 +1385,6 @@ def apply_antialiasing(alpha_array):
 
 def gaussian_blur_numpy(alpha_array, sigma):
     """High-quality Gaussian blur using numpy/scipy."""
-    import numpy as np
-    from scipy import ndimage
-    
     alpha_norm = alpha_array / 255.0 if alpha_array.max() > 1 else alpha_array
     blurred = ndimage.gaussian_filter(alpha_norm, sigma=sigma)
     return blurred
@@ -1399,9 +1392,6 @@ def gaussian_blur_numpy(alpha_array, sigma):
 
 def remove_halo_effect(alpha_array):
     """Remove white outlines/halo around edges."""
-    import numpy as np
-    from scipy import ndimage
-    
     alpha_norm = alpha_array / 255.0 if alpha_array.max() > 1 else alpha_array
     
     # Detect halo regions: semi-transparent pixels at boundaries
@@ -1430,9 +1420,6 @@ def remove_halo_effect(alpha_array):
 
 def apply_hd_refinement(alpha_array, rgb_array):
     """Apply additional refinement for HD mode cleaner cutouts."""
-    import numpy as np
-    from scipy import ndimage
-    
     alpha_norm = alpha_array / 255.0 if alpha_array.max() > 1 else alpha_array
     
     # Additional edge enhancement
@@ -1451,12 +1438,9 @@ def apply_hd_refinement(alpha_array, rgb_array):
 
 def finalize_alpha_channel(alpha_array):
     """Final processing to prepare alpha channel - keep it simple to preserve content."""
-    import numpy as np
-    
     alpha_norm = alpha_array / 255.0 if alpha_array.max() > 1 else alpha_array
     
     # Apply gentle Gaussian blur for smoothing without destroying content
-    from scipy import ndimage
     blurred = ndimage.gaussian_filter(alpha_norm, sigma=0.3)
     
     # Gentle threshold to clean up very noisy pixels only
